@@ -27,11 +27,14 @@ const VAT_JURISDICTIONS = [
 const BASE_URL = typeof window !== "undefined" ? window.location.origin : "https://luxury-mermaid-cdae15.netlify.app";
 
 // ── Yachtfolio image helper ──
-// Yachtfolio serves images at: https://images.yachtfolio.com/yachts/{id}/photos/1.jpg
-// The XLSX typically has a "Yachtfolio ID" or "ID" column we can use
+// Brochure URL format: https://www.yachtfolio.com/e-brochure/SLUG/token
+// Image URL format:    https://www.yachtfolio.com/uploads/yachts/SLUG/photos/photo_1.jpg
 const getYachtImage = (yacht) => {
   if (yacht.image_url) return yacht.image_url;
-  if (yacht.yachtfolio_id) return `https://images.yachtfolio.com/yachts/${yacht.yachtfolio_id}/photos/1.jpg`;
+  if (yacht.brochure_url) {
+    const match = yacht.brochure_url.match(/\/e-brochure\/([^\/]+)\//);
+    if (match) return `https://www.yachtfolio.com/uploads/yachts/${match[1]}/photos/photo_1.jpg`;
+  }
   return null;
 };
 
@@ -69,6 +72,7 @@ const copyToClipboard = async (text, onSuccess) => {
 };
 
 // ── XLSX Parser ──
+// Extracts hyperlinks from column B (Brochure link) for Yachtfolio image URLs
 const parseXlsxFile = (file, onSuccess, onError) => {
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -76,41 +80,44 @@ const parseXlsxFile = (file, onSuccess, onError) => {
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
-      const get = (row, ...keys) => {
-        const rowKeys = Object.keys(row);
-        for (const k of keys) {
-          const found = rowKeys.find(rk =>
-            rk.toLowerCase().replace(/[\s_\-]/g, "").includes(k.toLowerCase().replace(/[\s_\-]/g, ""))
-          );
-          if (found && row[found] !== "") return row[found];
+      // Extract hyperlink URLs from the sheet (column B = brochure links)
+      // SheetJS stores hyperlinks in cell.l.Target
+      const brochureByRow = {};
+      Object.entries(ws).forEach(([addr, cell]) => {
+        if (addr.startsWith("B") && cell.l && cell.l.Target) {
+          const rowNum = parseInt(addr.slice(1));
+          if (rowNum > 1) brochureByRow[rowNum] = cell.l.Target;
         }
-        return "";
-      };
+      });
+
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
       const mapped = rows
         .filter(r => Object.values(r).some(v => v !== ""))
-        .map((row, i) => ({
-          id: `yacht_${Date.now()}_${i}`,
-          // Try to grab Yachtfolio ID for image fetching
-          yachtfolio_id: get(row, "yachtfolioid", "yachtfolioId", "yachtid", "id") || null,
-          image_url: get(row, "imageurl", "image", "photo", "thumbnail") || null,
-          name: get(row, "name", "yacht", "vessel") || "Unknown",
-          length_m: get(row, "length", "loa", "size", "metres", "meters") || "",
-          builder: get(row, "builder", "shipyard", "yard") || "",
-          cabins: parseInt(get(row, "cabin", "stateroom", "cabins")) || 0,
-          cabin_config: get(row, "cabinconfig", "configuration", "layout") || "",
-          guests: parseInt(get(row, "guest", "pax", "passengers", "berths")) || 0,
-          crew: parseInt(get(row, "crew", "staff")) || 0,
-          year_built: parseInt(get(row, "built", "yearbuilt", "year", "build")) || null,
-          year_refit: parseInt(get(row, "refit", "yearrefit", "refitted")) || null,
-          price_high: get(row, "pricehigh", "highseason", "maxprice", "price") || "",
-          price_low: get(row, "pricelow", "lowseason", "minprice") || "",
-          summer_port: get(row, "summerport", "homeport", "base", "summer") || "",
-          winter_port: get(row, "winterport", "winter") || "",
-          discount: 0,
-        }));
+        .map((row, i) => {
+          const rowNum = i + 2; // +2 because row 1 is header
+          const brochure_url = brochureByRow[rowNum] || null;
+          return {
+            id: `yacht_${Date.now()}_${i}`,
+            brochure_url,
+            image_url: null,
+            name: row["Yacht name"] || row["name"] || row["Vessel"] || "Unknown",
+            length_m: row["Length [m]"] || row["Length"] || row["LOA"] || "",
+            builder: row["Builder"] || row["Shipyard"] || "",
+            cabins: parseInt(row["Cabins"] || row["Staterooms"] || 0) || 0,
+            cabin_config: row["Cabin configuration"] || row["Layout"] || "",
+            guests: parseInt(row["Guests sleeping"] || row["Guests"] || row["PAX"] || 0) || 0,
+            crew: parseInt(row["Crew"] || 0) || 0,
+            year_built: parseInt(row["Year built"] || row["Built"] || 0) || null,
+            year_refit: parseInt(row["Year refit"] || row["Refit"] || 0) || null,
+            price_high: row["Price high"] || row["High season"] || "",
+            price_low: row["Price low"] || row["Low season"] || "",
+            summer_port: row["Current Summer Base Port"] || row["Summer base"] || row["Summer"] || "",
+            winter_port: row["Current Winter Base Port"] || row["Winter base"] || row["Winter"] || "",
+            discount: 0,
+          };
+        });
       onSuccess(mapped);
     } catch (err) { onError(err.message); }
   };
