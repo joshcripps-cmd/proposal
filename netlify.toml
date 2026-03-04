@@ -1,0 +1,35 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# Redirect API calls to serverless functions
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# SPA fallback — all routes serve index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Environment variable hints (set these in Netlify dashboard)
+# VITE_SUPABASE_URL = your-project.supabase.co
+# VITE_SUPABASE_ANON_KEY = your-anon-key
+# SUPABASE_URL = your-project.supabase.co
+# SUPABASE_SERVICE_KEY = your-service-role-key
+# YACHTFOLIO_PASSKEY = 6b5e824f326752c8f717a3e06128a8f796562136
+# RESEND_API_KEY = re_xxxxxxxxxx
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Headers for security
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

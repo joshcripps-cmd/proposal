@@ -1,0 +1,114 @@
+/**
+ * Roccabella Proposals — Supabase Client
+ * Shared database client with typed helpers for all operations.
+ */
+import { createClient } from '@supabase/supabase-js';
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ── Session ID (persists per browser session) ──
+function getSessionId() {
+  let sid = sessionStorage.getItem('rb_session_id');
+  if (!sid) {
+    sid = crypto.randomUUID();
+    sessionStorage.setItem('rb_session_id', sid);
+  }
+  return sid;
+}
+
+// ── PROPOSALS ──
+export async function getProposalBySlug(slug) {
+  const { data, error } = await supabase.from('proposals').select('*').eq('slug', slug).single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getAllProposals() {
+  const { data, error } = await supabase.from('proposal_summaries').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function createProposal(proposal) {
+  const slug = proposal.client_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now().toString(36);
+  const { data, error } = await supabase.from('proposals').insert({ ...proposal, slug }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProposal(id, updates) {
+  const { data, error } = await supabase.from('proposals').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function sendProposal(id) { return updateProposal(id, { status: 'sent' }); }
+
+// ── YACHTS ──
+export async function getYachtsByIds(ids) {
+  const { data, error } = await supabase.from('yachts').select('*').in('id', ids).eq('active', true);
+  if (error) throw error;
+  return data;
+}
+
+export async function getAllYachts() {
+  const { data, error } = await supabase.from('yachts').select('*').eq('active', true).order('length_m', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function upsertYachts(yachts) {
+  const { data, error } = await supabase.from('yachts').upsert(yachts, { onConflict: 'name' }).select();
+  if (error) throw error;
+  return data;
+}
+
+// ── ANALYTICS ──
+export async function trackEvent(proposalId, eventType, extra = {}) {
+  const { error } = await supabase.from('analytics').insert({
+    proposal_id: proposalId, event_type: eventType, session_id: getSessionId(),
+    viewer_name: extra.viewerName || null, yacht_id: extra.yachtId || null,
+    metadata: extra.metadata || {}, user_agent: navigator.userAgent,
+  });
+  if (error) console.warn('Analytics error:', error);
+}
+
+export async function getProposalAnalytics(proposalId) {
+  const { data, error } = await supabase.from('analytics').select('*').eq('proposal_id', proposalId).order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+// ── SHORTLISTS ──
+export async function addToShortlist(proposalId, yachtId, viewerName) {
+  await supabase.from('shortlists').upsert({ proposal_id: proposalId, yacht_id: yachtId, viewer_name: viewerName, session_id: getSessionId() }, { onConflict: 'proposal_id,yacht_id,session_id' });
+  await trackEvent(proposalId, 'shortlist_add', { yachtId, viewerName });
+}
+
+export async function removeFromShortlist(proposalId, yachtId) {
+  await supabase.from('shortlists').delete().eq('proposal_id', proposalId).eq('yacht_id', yachtId).eq('session_id', getSessionId());
+  await trackEvent(proposalId, 'shortlist_remove', { yachtId });
+}
+
+export async function getShortlist(proposalId) {
+  const { data } = await supabase.from('shortlists').select('yacht_id').eq('proposal_id', proposalId).eq('session_id', getSessionId());
+  return (data || []).map(s => s.yacht_id);
+}
+
+// ── ENQUIRIES ──
+export async function submitEnquiry(proposalId, viewerName, shortlistedYachtIds, message) {
+  const { data, error } = await supabase.from('enquiries').insert({ proposal_id: proposalId, viewer_name: viewerName, shortlisted_yacht_ids: shortlistedYachtIds, message, session_id: getSessionId() }).select().single();
+  if (error) throw error;
+  await trackEvent(proposalId, 'enquiry_sent', { viewerName, metadata: { shortlistedYachtIds } });
+  try { await fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'enquiry', proposalId, viewerName, shortlistedYachtIds, message }) }); } catch (e) { console.warn('Notification error:', e); }
+  return data;
+}
+
+// ── AUTH ──
+export async function signIn(email, password) { const { data, error } = await supabase.auth.signInWithPassword({ email, password }); if (error) throw error; return data; }
+export async function signOut() { await supabase.auth.signOut(); }
+export async function getSession() { const { data } = await supabase.auth.getSession(); return data.session; }
+export function onAuthChange(cb) { return supabase.auth.onAuthStateChange(cb); }
