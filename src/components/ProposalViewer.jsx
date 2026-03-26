@@ -1287,8 +1287,10 @@ export default function RoccabellaProposal() {
                 discount={proposal.discount}
                 isFav={favourites.has(yacht.id)}
                 onToggleFav={toggleFav}
-                onSelect={setSelectedYacht}
-                <AvailabilityCalendar
+              onSelect={setSelectedYacht}
+              imageUrl={getYachtImage(yacht)}
+            />
+            <AvailabilityCalendar
                 yacht={yacht}
                 bookings={(yachtBookings[yacht.name] || []).map(b => ({
                   start_date: b.start, end_date: b.end, status: b.status, route: b.route
