@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import {
   getAllProposals, createProposal, updateProposal, sendProposal,
   getAllYachts, upsertYachts, getProposalAnalytics,
+  getBookingsByYachtId, addBooking, deleteBooking,
 } from "../lib/supabase";
 
 // ── Brand ──
@@ -108,7 +109,10 @@ function ProposalList() {
     <div style={S.page}>
       <div style={S.header}>
         <div style={S.title}>ROCCABELLA — PROPOSALS</div>
-        <button style={S.btn} onClick={() => navigate("/admin/new")}>+ New Proposal</button>
+        <div style={{ display: "flex", gap: 12 }}>
+          <button style={S.btnOutline} onClick={() => navigate("/admin/bookings")}>📅 Bookings</button>
+          <button style={S.btn} onClick={() => navigate("/admin/new")}>+ New Proposal</button>
+        </div>
       </div>
       <div style={{ maxWidth: 1000, margin: "0 auto", padding: "32px 24px" }}>
         {loading ? <div style={{ color: "#999", textAlign: "center", padding: 40 }}>Loading...</div> : (
@@ -298,6 +302,372 @@ function NewProposal() {
 }
 
 // ── Router ──
+// ── Booking Manager ──
+function BookingManager() {
+  const [yachts, setYachts] = useState([]);
+  const [selectedYacht, setSelectedYacht] = useState(null);
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ start_date: "", end_date: "", status: "Booked", route: "" });
+  const [pdfParsed, setPdfParsed] = useState(null); // { yachtName: [{start, end, status, route}] }
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    getAllYachts().then(y => { setYachts(y || []); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedYacht) { setBookings([]); return; }
+    setLoading(true);
+    getBookingsByYachtId(selectedYacht.id)
+      .then(b => { setBookings(b || []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [selectedYacht]);
+
+  // Parse Yachtfolio booking PDF text
+  const parseBookingPdf = async (file) => {
+    const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      fullText += content.items.map(item => item.str).join(" ") + "\n";
+    }
+    return parseBookingText(fullText);
+  };
+
+  const parseBookingText = (text) => {
+    const results = {};
+    // Match date patterns: "13 Jun 2026" or "02 Jul 2026"
+    const dateRe = /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/gi;
+    const months = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+    const parseDate = (str) => {
+      const parts = str.trim().split(/\s+/);
+      if (parts.length !== 3) return null;
+      const d = parts[0].padStart(2, "0");
+      const m = months[parts[1].toLowerCase()];
+      return m ? `${parts[2]}-${m}-${d}` : null;
+    };
+
+    // Split text into lines and find yacht sections
+    const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+    let currentYacht = null;
+
+    // Known yacht name patterns: all-caps words that appear before date patterns
+    // Yachtfolio format: "Last update: DATE YACHT_NAME" or just "YACHT_NAME" as header
+    const yachtNameRe = /(?:Last update:.*?\d{2}:\d{2}:\d{2}\s+)?([\w''\-\s]+?)(?=\s+Start|\s+\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))/i;
+
+    for (const line of lines) {
+      // Try to find yacht name — typically all caps, sometimes after "Last update: ..."
+      const nameMatch = line.match(/Last update:.*?\d{2}:\d{2}:\d{2}\s+(.+)/);
+      if (nameMatch) {
+        currentYacht = nameMatch[1].trim();
+        if (!results[currentYacht]) results[currentYacht] = [];
+        continue;
+      }
+
+      // Check if line is just a yacht name (all caps, short)
+      if (line.length < 40 && line === line.toUpperCase() && !line.match(/\d/) && line.match(/^[A-Z\s'''\-]+$/)) {
+        currentYacht = line.trim();
+        if (!results[currentYacht]) results[currentYacht] = [];
+        continue;
+      }
+
+      if (!currentYacht) continue;
+
+      // Find date pairs in the line
+      const dates = [...line.matchAll(dateRe)].map(m => m[1]);
+      if (dates.length >= 2) {
+        const startDate = parseDate(dates[0]);
+        const endDate = parseDate(dates[1]);
+        if (!startDate || !endDate) continue;
+
+        // Extract status
+        let status = "Booked";
+        if (/\bOption\b/i.test(line)) status = "Option";
+        else if (/\bHold\b/i.test(line)) status = "Hold";
+        else if (/\bBlocked\b/i.test(line)) status = "Blocked";
+
+        // Extract route — text after status keyword, typically "- Location to Location"
+        let route = null;
+        const routeMatch = line.match(/(?:Booked|Option|Hold|Blocked)\s*-\s*(.+)/i);
+        if (routeMatch) route = routeMatch[1].trim();
+
+        results[currentYacht].push({ start: startDate, end: endDate, status, route });
+      }
+    }
+    return results;
+  };
+
+  const handlePdfUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    setPdfParsed(null);
+    try {
+      const parsed = await parseBookingPdf(file);
+      const yachtCount = Object.keys(parsed).length;
+      const bookingCount = Object.values(parsed).reduce((sum, arr) => sum + arr.length, 0);
+      if (bookingCount === 0) {
+        setImportResult({ success: false, message: "No booking data found in this PDF. Make sure it's a Yachtfolio Booking List export." });
+      } else {
+        setPdfParsed(parsed);
+        setImportResult({ success: true, message: `Found ${bookingCount} bookings for ${yachtCount} yacht${yachtCount > 1 ? "s" : ""}.` });
+      }
+    } catch (err) {
+      setImportResult({ success: false, message: "Failed to parse PDF: " + err.message });
+    }
+    setImporting(false);
+  };
+
+  const handleImportAll = async () => {
+    if (!pdfParsed) return;
+    setImporting(true);
+    let imported = 0;
+    let skipped = 0;
+    const errors = [];
+
+    for (const [yachtName, entries] of Object.entries(pdfParsed)) {
+      // Match yacht name to database
+      const yacht = yachts.find(y => y.name.toUpperCase() === yachtName.toUpperCase());
+      if (!yacht) {
+        skipped += entries.length;
+        errors.push(`${yachtName}: not found in database`);
+        continue;
+      }
+      for (const entry of entries) {
+        try {
+          await addBooking({
+            yacht_id: yacht.id,
+            start_date: entry.start,
+            end_date: entry.end,
+            status: entry.status,
+            route: entry.route || null,
+          });
+          imported++;
+        } catch (e) {
+          errors.push(`${yachtName} ${entry.start}: ${e.message}`);
+        }
+      }
+    }
+
+    setPdfParsed(null);
+    setImportResult({
+      success: true,
+      message: `Imported ${imported} booking${imported !== 1 ? "s" : ""}${skipped > 0 ? `, skipped ${skipped} (yacht not found)` : ""}.${errors.length > 0 ? " Issues: " + errors.slice(0, 3).join("; ") : ""}`,
+    });
+
+    // Refresh bookings if a yacht is selected
+    if (selectedYacht) {
+      const updated = await getBookingsByYachtId(selectedYacht.id);
+      setBookings(updated || []);
+    }
+    setImporting(false);
+  };
+
+  const handleAdd = async () => {
+    if (!selectedYacht || !form.start_date || !form.end_date) return;
+    setSaving(true);
+    try {
+      await addBooking({
+        yacht_id: selectedYacht.id,
+        start_date: form.start_date,
+        end_date: form.end_date,
+        status: form.status,
+        route: form.route || null,
+      });
+      const updated = await getBookingsByYachtId(selectedYacht.id);
+      setBookings(updated || []);
+      setForm({ start_date: "", end_date: "", status: "Booked", route: "" });
+    } catch (e) {
+      alert("Failed to add booking: " + e.message);
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm("Delete this booking?")) return;
+    try {
+      await deleteBooking(id);
+      setBookings(bookings.filter(b => b.id !== id));
+    } catch (e) {
+      alert("Failed to delete: " + e.message);
+    }
+  };
+
+  const formatDate = (d) => {
+    if (!d) return "—";
+    return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  };
+
+  return (
+    <div style={S.page}>
+      <div style={S.header}>
+        <div style={S.title}>BOOKING MANAGER</div>
+        <button style={S.btnOutline} onClick={() => navigate("/admin")}>← Back</button>
+      </div>
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "32px 24px" }}>
+
+        {/* PDF Upload */}
+        <div style={{ ...S.card, marginBottom: 24 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: NAVY, marginBottom: 4 }}>
+            Import from Yachtfolio
+          </div>
+          <div style={{ fontSize: 12, color: "#999", marginBottom: 16 }}>
+            Export a Booking List PDF from Yachtfolio and upload it here. Bookings will be matched to yachts in your database by name.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <input type="file" accept=".pdf" onChange={handlePdfUpload} disabled={importing} style={{ fontSize: 13 }} />
+            {importing && <span style={{ color: GOLD, fontSize: 13, fontWeight: 500 }}>Processing...</span>}
+          </div>
+          {importResult && (
+            <div style={{
+              marginTop: 12, padding: "10px 16px", borderRadius: 8, fontSize: 13,
+              background: importResult.success ? "#ecfdf5" : "#fef2f2",
+              color: importResult.success ? "#065f46" : "#991b1b",
+            }}>
+              {importResult.message}
+            </div>
+          )}
+          {pdfParsed && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: NAVY, marginBottom: 8 }}>Preview:</div>
+              {Object.entries(pdfParsed).map(([name, entries]) => {
+                const matched = yachts.find(y => y.name.toUpperCase() === name.toUpperCase());
+                return (
+                  <div key={name} style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: matched ? NAVY : "#999" }}>
+                      {name} {matched ? "✓" : "✗ not in database"}
+                      <span style={{ fontWeight: 400, color: "#999", marginLeft: 8 }}>{entries.length} booking{entries.length !== 1 ? "s" : ""}</span>
+                    </div>
+                    {entries.slice(0, 3).map((e, i) => (
+                      <div key={i} style={{ fontSize: 12, color: "#777", marginLeft: 16 }}>
+                        {e.start} → {e.end} · {e.status}{e.route ? ` · ${e.route}` : ""}
+                      </div>
+                    ))}
+                    {entries.length > 3 && <div style={{ fontSize: 11, color: "#aaa", marginLeft: 16 }}>+{entries.length - 3} more</div>}
+                  </div>
+                );
+              })}
+              <button style={{ ...S.btn, marginTop: 12 }} onClick={handleImportAll} disabled={importing}>
+                {importing ? "Importing..." : "Import All Bookings"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Manual entry — Yacht selector */}
+        <div style={{ ...S.card, marginBottom: 24 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: NAVY, marginBottom: 4 }}>Manual Entry</div>
+          <div style={{ fontSize: 12, color: "#999", marginBottom: 12 }}>Select a yacht to add individual bookings or view existing ones.</div>
+          <select
+            style={S.select}
+            value={selectedYacht?.id || ""}
+            onChange={e => {
+              const y = yachts.find(y => y.id === e.target.value);
+              setSelectedYacht(y || null);
+            }}
+          >
+            <option value="">— Choose a yacht —</option>
+            {yachts.map(y => (
+              <option key={y.id} value={y.id}>{y.name} ({y.length_m}m · {y.builder})</option>
+            ))}
+          </select>
+        </div>
+
+        {selectedYacht && (
+          <>
+            {/* Add booking form */}
+            <div style={{ ...S.card, marginBottom: 24 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: NAVY, marginBottom: 16 }}>
+                Add Booking — {selectedYacht.name}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 2fr", gap: 12, marginBottom: 16 }}>
+                <div>
+                  <div style={S.label}>Start Date</div>
+                  <input type="date" style={S.input} value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} />
+                </div>
+                <div>
+                  <div style={S.label}>End Date</div>
+                  <input type="date" style={S.input} value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} />
+                </div>
+                <div>
+                  <div style={S.label}>Status</div>
+                  <select style={S.select} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                    <option value="Booked">Booked</option>
+                    <option value="Option">Option</option>
+                    <option value="Hold">Hold</option>
+                    <option value="Blocked">Blocked</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={S.label}>Route / Notes</div>
+                  <input style={S.input} placeholder="e.g. Athens to Mykonos" value={form.route} onChange={e => setForm(f => ({ ...f, route: e.target.value }))} />
+                </div>
+              </div>
+              <button style={S.btn} onClick={handleAdd} disabled={saving || !form.start_date || !form.end_date}>
+                {saving ? "Saving..." : "+ Add Booking"}
+              </button>
+            </div>
+
+            {/* Existing bookings */}
+            <div style={S.card}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: NAVY, marginBottom: 16 }}>
+                Current Bookings ({bookings.length})
+              </div>
+              {loading ? (
+                <div style={{ color: "#999", padding: 20, textAlign: "center" }}>Loading...</div>
+              ) : bookings.length === 0 ? (
+                <div style={{ color: "#999", padding: 20, textAlign: "center" }}>No bookings yet for {selectedYacht.name}</div>
+              ) : (
+                <div style={{ border: "1px solid #eee", borderRadius: 8, overflow: "hidden" }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "1fr 1fr 90px 2fr 50px",
+                    padding: "10px 16px", background: NAVY, color: "rgba(255,255,255,0.7)",
+                    fontSize: 10, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase",
+                  }}>
+                    <div>Start</div><div>End</div><div>Status</div><div>Route</div><div></div>
+                  </div>
+                  {bookings.map((b, i) => (
+                    <div key={b.id} style={{
+                      display: "grid", gridTemplateColumns: "1fr 1fr 90px 2fr 50px",
+                      padding: "10px 16px", borderBottom: i < bookings.length - 1 ? "1px solid #f0f0f0" : "none",
+                      background: i % 2 === 0 ? "#fafaf8" : "#fff", fontSize: 13, color: NAVY, alignItems: "center",
+                    }}>
+                      <div>{formatDate(b.start_date)}</div>
+                      <div>{formatDate(b.end_date)}</div>
+                      <div>
+                        <span style={{
+                          display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
+                          background: b.status === "Option" ? "#fef3cd" : b.status === "Hold" ? "#d1ecf1" : b.status === "Blocked" ? "#e2e3e5" : "#fecdd3",
+                          color: b.status === "Option" ? "#856404" : b.status === "Hold" ? "#0c5460" : b.status === "Blocked" ? "#383d41" : "#9b1c31",
+                        }}>{b.status}</span>
+                      </div>
+                      <div style={{ color: "#777", fontSize: 12 }}>{b.route || "—"}</div>
+                      <div>
+                        <button onClick={() => handleDelete(b.id)} style={{
+                          background: "none", border: "none", color: RED, cursor: "pointer", fontSize: 16,
+                        }}>×</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── PIN Gate ──
 const ADMIN_PIN = "2026";
 const AUTH_KEY = "rb_proposals_auth";
@@ -363,6 +733,7 @@ export default function AdminDashboard() {
     <Routes>
       <Route index element={<ProposalList />} />
       <Route path="new" element={<NewProposal />} />
+      <Route path="bookings" element={<BookingManager />} />
     </Routes>
   );
 }
