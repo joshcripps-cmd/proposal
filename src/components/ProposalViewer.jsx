@@ -1298,9 +1298,6 @@ export default function RoccabellaProposal() {
               />
             </div>
           ))}
-        </div>
-      </div>
-
       {/* ── SHORTLIST BAR ── */}
       {favourites.size > 0 && (
         <div style={{
