@@ -103,13 +103,6 @@ export async function getBookingsByYachtIds(yachtIds) {
   const { data, error } = await supabase.from('yacht_bookings').select('*').in('yacht_id', yachtIds).order('start_date', { ascending: true });
   if (error) throw error;
   return data;
-}
-
-export async function getBookingsByYachtId(yachtId) {
-  const { data, error } = await supabase.from('yacht_bookings').select('*').eq('yacht_id', yachtId).order('start_date', { ascending: true });
-  if (error) throw error;
-  return data;
-}
 
 export async function addBooking(booking) {
   const { data, error } = await supabase.from('yacht_bookings').insert(booking).select().single();
