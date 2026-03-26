@@ -1296,17 +1296,16 @@ export default function RoccabellaProposal() {
       </div>
                 bookings={(yachtBookings[yacht.name] || []).map(b => ({
                   start_date: b.start, end_date: b.end, status: b.status, route: b.route
-           onSelect={setSelectedYacht}
-              imageUrl={getYachtImage(yacht)}
-            />
-            <AvailabilityCalendar
-              yacht={yacht}
-              bookings={(yachtBookings[yacht.name] || []).map(b => ({
-                start_date: b.start, end_date: b.end, status: b.status, route: b.route
-              }))}
-              slug={slug}
-              onSubmitEnquiry={submitCharterEnquiry}
-            />
+           <YachtCard
+  bookings={(yachtBookings[yacht.name] || []).map(b => ({
+    start_date: b.start,
+    end_date: b.end,
+    status: b.status,
+    route: b.route,
+  }))}
+  onSelect={setSelectedYacht}
+  imageUrl={getYachtImage(yacht)}
+/>
           </div>
         ))}
         </div>
