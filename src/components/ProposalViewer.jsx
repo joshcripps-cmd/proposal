@@ -1272,26 +1272,28 @@ export default function RoccabellaProposal() {
           <div style={{
             width: 48, height: 1, background: `linear-gradient(90deg, transparent, ${GOLD}, transparent)`, margin: "16px auto 0",
           }} />
-        </div>
-
-        {/* Yacht grid */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
-          gap: 24,
-        }}>
-             {yachts.map((yacht) => (
+        {yachts.map((yacht) => (
             <div key={yacht.id}>
               <YachtCard
                 yacht={yacht}
                 discount={proposal.discount}
                 isFav={favourites.has(yacht.id)}
                 onToggleFav={toggleFav}
-              onSelect={setSelectedYacht}
-              imageUrl={getYachtImage(yacht)}
-            />
-            <AvailabilityCalendar
+                onSelect={setSelectedYacht}
+                imageUrl={getYachtImage(yacht)}
+              />
+              <AvailabilityCalendar
                 yacht={yacht}
+                bookings={(yachtBookings[yacht.name] || []).map(b => ({
+                  start_date: b.start, end_date: b.end, status: b.status, route: b.route
+                }))}
+                slug={slug}
+                onSubmitEnquiry={submitCharterEnquiry}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
                 bookings={(yachtBookings[yacht.name] || []).map(b => ({
                   start_date: b.start, end_date: b.end, status: b.status, route: b.route
            onSelect={setSelectedYacht}
