@@ -98,6 +98,30 @@ export async function getShortlist(proposalId) {
   return (data || []).map(s => s.yacht_id);
 }
 
+// ── YACHT BOOKINGS ──
+export async function getBookingsByYachtIds(yachtIds) {
+  const { data, error } = await supabase.from('yacht_bookings').select('*').in('yacht_id', yachtIds).order('start_date', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+export async function getBookingsByYachtId(yachtId) {
+  const { data, error } = await supabase.from('yacht_bookings').select('*').eq('yacht_id', yachtId).order('start_date', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+export async function addBooking(booking) {
+  const { data, error } = await supabase.from('yacht_bookings').insert(booking).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteBooking(id) {
+  const { error } = await supabase.from('yacht_bookings').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ── ENQUIRIES ──
 export async function submitEnquiry(proposalId, viewerName, shortlistedYachtIds, message) {
   const { data, error } = await supabase.from('enquiries').insert({ proposal_id: proposalId, viewer_name: viewerName, shortlisted_yacht_ids: shortlistedYachtIds, message, session_id: getSessionId() }).select().single();
