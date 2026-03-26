@@ -9,7 +9,7 @@
  */
 
 const YF_PASSKEY = process.env.YACHTFOLIO_PASSKEY;
-const YF_BASE = 'https://www.yachtfolio.com/cgi-bin/yf3';
+const YF_BASE = 'https://www.yachtfolio.com/api';
 
 exports.handler = async (event) => {
   const params = event.queryStringParameters || {};
