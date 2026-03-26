@@ -405,10 +405,11 @@ function YachtCard({ yacht, discount, isFav, onToggleFav, onSelect, imageUrl }) 
 }
 
 // ── Yacht Detail Modal ──
-function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFriendly, imageUrl, eBrochureUrl }) {
+function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFriendly, imageUrl, eBrochureUrl, bookings }) {
   const hasDiscount = discount > 0 && typeof yacht.price_high === "number";
   const hasImage = !!imageUrl;
   const brochureHref = yacht.brochure_url || eBrochureUrl || null;
+  const hasBookings = bookings && bookings.length > 0;
 
   return (
     <div style={{
@@ -578,6 +579,54 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
               )}
             </div>
           </div>
+
+          {/* Booking Availability */}
+          {hasBookings && (
+            <div style={{ padding: "0 40px 30px" }}>
+              <div style={{
+                fontSize: 10, color: "#999", fontFamily: "'Inter', sans-serif",
+                fontWeight: 600, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 12,
+              }}>Booking Calendar</div>
+              <div style={{
+                border: "1px solid #eee", borderRadius: 10, overflow: "hidden",
+              }}>
+                {/* Header */}
+                <div style={{
+                  display: "grid", gridTemplateColumns: "1fr 1fr 100px 1.5fr",
+                  padding: "10px 16px", background: NAVY, color: "rgba(255,255,255,0.7)",
+                  fontSize: 10, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase",
+                  fontFamily: "'Inter', sans-serif",
+                }}>
+                  <div>Start</div>
+                  <div>End</div>
+                  <div>Status</div>
+                  <div>Route</div>
+                </div>
+                {/* Rows */}
+                {bookings.map((b, i) => (
+                  <div key={i} style={{
+                    display: "grid", gridTemplateColumns: "1fr 1fr 100px 1.5fr",
+                    padding: "10px 16px", borderBottom: i < bookings.length - 1 ? "1px solid #f0f0f0" : "none",
+                    background: i % 2 === 0 ? "#fafaf8" : WHITE,
+                    fontSize: 13, fontFamily: "'Inter', sans-serif", color: NAVY,
+                  }}>
+                    <div>{b.start}</div>
+                    <div>{b.end}</div>
+                    <div>
+                      <span style={{
+                        display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
+                        background: (b.status || "").toLowerCase().includes("option") ? "#fef3cd" : "#fecdd3",
+                        color: (b.status || "").toLowerCase().includes("option") ? "#856404" : "#9b1c31",
+                      }}>
+                        {(b.status || "Booked").replace(/^./, c => c.toUpperCase())}
+                      </span>
+                    </div>
+                    <div style={{ color: "#777", fontSize: 12 }}>{b.route || "—"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -712,6 +761,7 @@ export default function RoccabellaProposal() {
   const [showComparison, setShowComparison] = useState(false);
   const [enquirySent, setEnquirySent] = useState(false);
   const [yachtImages, setYachtImages] = useState({}); // { yachtName: imageUrl }
+  const [yachtBookings, setYachtBookings] = useState({}); // { yachtName: [{start, end, status, route}] }
   const [imagesLoading, setImagesLoading] = useState(true);
 
   // ── Fetch Proposal + Yachts from Supabase ──
@@ -753,13 +803,13 @@ export default function RoccabellaProposal() {
           return;
         }
 
-        // Match yacht names from our proposal to Yachtfolio IDs
+        // Match yacht names from our proposal to Yachtfolio IDs (exact match only)
         const nameToId = {};
         for (const yfYacht of listData.data) {
           const yfName = (yfYacht.name || "").toUpperCase().trim();
           for (const proposalYacht of yachts) {
             const pName = proposalYacht.name.toUpperCase().trim();
-            if (yfName === pName || yfName.includes(pName) || pName.includes(yfName)) {
+            if (yfName === pName) {
               nameToId[proposalYacht.name] = yfYacht.id;
             }
           }
@@ -773,6 +823,16 @@ export default function RoccabellaProposal() {
               `${YF_PROXY}?action=brochure&id=${yfId}`
             );
             const brochureData = await brochureRes.json();
+
+            // Safety check: validate length matches our proposal yacht (±3m tolerance)
+            const proposalYacht = yachts.find(y => y.name === name);
+            const yfLength = parseFloat(brochureData.loa || brochureData.length || 0);
+            const pLength = parseFloat(proposalYacht?.length_m || 0);
+            if (yfLength > 0 && pLength > 0 && Math.abs(yfLength - pLength) > 3) {
+              console.warn(`Skipping images for ${name}: length mismatch (Yachtfolio: ${yfLength}m, Proposal: ${pLength}m)`);
+              return;
+            }
+
             const galleries = brochureData.galleries || {};
             const exteriorImages = galleries.EXTERIOR || [];
             const fullImages = galleries.FULL || [];
@@ -793,6 +853,8 @@ export default function RoccabellaProposal() {
             }
             // Store Yachtfolio e-brochure link
             images[`${name}_ebrochure`] = `https://www.yachtfolio.com/yacht/${yfId}`;
+            // Store Yachtfolio ID for booking fetch
+            images[`${name}_yfid`] = yfId;
           } catch (e) {
             console.warn(`Failed to fetch brochure for ${name} (ID: ${yfId}):`, e);
           }
@@ -800,6 +862,41 @@ export default function RoccabellaProposal() {
 
         await Promise.all(fetchPromises);
         setYachtImages(images);
+
+        // Step 3: Fetch booking/calendar data for each matched yacht
+        const bookings = {};
+        const bookingPromises = Object.entries(nameToId).map(async ([name, yfId]) => {
+          try {
+            const bookingRes = await fetch(`${YF_PROXY}?action=bookings&id=${yfId}`);
+            const bookingResult = await bookingRes.json();
+            if (bookingResult.data) {
+              // Normalize booking data — handle various Yachtfolio response formats
+              const raw = bookingResult.data;
+              let entries = [];
+              if (Array.isArray(raw)) {
+                entries = raw;
+              } else if (raw.bookings && Array.isArray(raw.bookings)) {
+                entries = raw.bookings;
+              } else if (raw.calendar && Array.isArray(raw.calendar)) {
+                entries = raw.calendar;
+              } else if (raw.data && Array.isArray(raw.data)) {
+                entries = raw.data;
+              }
+              if (entries.length > 0) {
+                bookings[name] = entries.map(b => ({
+                  start: b.start || b.date_from || b.check_in || b.from || null,
+                  end: b.end || b.date_to || b.check_out || b.to || null,
+                  status: b.status || b.type || "Booked",
+                  route: b.route || b.itinerary || b.description || null,
+                })).filter(b => b.start && b.end);
+              }
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch bookings for ${name}:`, e);
+          }
+        });
+        await Promise.all(bookingPromises);
+        setYachtBookings(bookings);
       } catch (e) {
         console.warn("Yachtfolio API not available, using fallback images:", e);
       } finally {
@@ -1104,6 +1201,7 @@ export default function RoccabellaProposal() {
           brokerFriendly={isBF}
           imageUrl={getYachtImage(selectedYacht)}
           eBrochureUrl={yachtImages[`${selectedYacht.name}_ebrochure`] || null}
+          bookings={yachtBookings[selectedYacht.name] || null}
         />
       )}
 
