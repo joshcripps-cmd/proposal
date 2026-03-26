@@ -257,8 +257,8 @@ function NewProposal() {
                 <div>
                   <div style={S.label}>Mode</div>
                   <select style={S.select} value={form.broker_friendly ? "broker" : "client"} onChange={e => setForm(f => ({ ...f, broker_friendly: e.target.value === "broker" }))}>
-                    <option value="client">Client-facing (full branding)</option>
-                    <option value="broker">Broker-friendly (clean/white-label)</option>
+                    <option value="client">Client-facing (Roccabella branding + broker details)</option>
+                    <option value="broker">Broker-friendly (neutral — no branding or broker info)</option>
                   </select>
                 </div>
               </div>
@@ -298,7 +298,57 @@ function NewProposal() {
 }
 
 // ── Router ──
+// ── PIN Gate ──
+const ADMIN_PIN = "2026";
+const AUTH_KEY = "rb_proposals_auth";
+
+function PinGate({ onSuccess }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState(false);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (pin === ADMIN_PIN) {
+      sessionStorage.setItem(AUTH_KEY, "1");
+      onSuccess();
+    } else {
+      setError(true);
+      setPin("");
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: CREAM, fontFamily: "Inter, sans-serif" }}>
+      <div style={{ textAlign: "center", maxWidth: 380, width: "100%", padding: 32 }}>
+        <div style={{ fontSize: 28, fontWeight: 300, letterSpacing: 6, color: NAVY, marginBottom: 4 }}>ROCCABELLA</div>
+        <div style={{ fontSize: 11, letterSpacing: 4, color: "#999", marginBottom: 40 }}>YACHTS</div>
+        <div style={{ fontSize: 13, color: NAVY, fontWeight: 600, letterSpacing: 2, marginBottom: 24, textTransform: "uppercase" }}>Proposal Manager</div>
+        <form onSubmit={handleSubmit}>
+          <input
+            type="password"
+            inputMode="numeric"
+            maxLength={6}
+            value={pin}
+            onChange={(e) => { setPin(e.target.value); setError(false); }}
+            placeholder="Enter PIN"
+            style={{
+              width: "100%", padding: "14px 20px", border: error ? `2px solid ${RED}` : "1px solid #ccc",
+              borderRadius: 8, fontSize: 16, textAlign: "center", letterSpacing: 8, outline: "none",
+              boxSizing: "border-box", marginBottom: 16, background: "#fff",
+            }}
+            autoFocus
+          />
+          {error && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>Incorrect PIN</div>}
+          <button type="submit" style={{ ...S.btn, width: "100%", padding: "14px 24px" }}>Access Dashboard</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
+  const [authed, setAuthed] = useState(() => sessionStorage.getItem(AUTH_KEY) === "1");
+
   // Load fonts
   useEffect(() => {
     const link = document.createElement("link");
@@ -306,6 +356,8 @@ export default function AdminDashboard() {
     link.rel = "stylesheet";
     document.head.appendChild(link);
   }, []);
+
+  if (!authed) return <PinGate onSuccess={() => setAuthed(true)} />;
 
   return (
     <Routes>
