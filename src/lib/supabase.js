@@ -135,4 +135,47 @@ export async function submitEnquiry(proposalId, viewerName, shortlistedYachtIds,
 export async function signIn(email, password) { const { data, error } = await supabase.auth.signInWithPassword({ email, password }); if (error) throw error; return data; }
 export async function signOut() { await supabase.auth.signOut(); }
 export async function getSession() { const { data } = await supabase.auth.getSession(); return data.session; }
-export function onAuthChange(cb) { return supabase.auth.onAuthStateChange(cb); }
+export function onAuthChange(cb) { return supabase.auth.onAuthStateChange(cb); }// ──────────────────────────────────────────────────────
+// ADD these functions to your existing src/lib/supabase.js
+// (append to the bottom, before any export statements)
+// ──────────────────────────────────────────────────────
+
+// ── Fetch bookings for a list of yacht IDs ──
+export async function getBookingsByYachtIds(yachtIds) {
+  if (!yachtIds || yachtIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("yacht_bookings")
+    .select("*")
+    .in("yacht_id", yachtIds)
+    .order("start_date", { ascending: true });
+  if (error) {
+    console.error("Error fetching bookings:", error);
+    return [];
+  }
+  return data || [];
+}
+
+// ── Submit a charter enquiry ──
+export async function submitCharterEnquiry(enquiry) {
+  const { data, error } = await supabase
+    .from("charter_enquiries")
+    .insert([{
+      proposal_slug: enquiry.proposal_slug,
+      yacht_id: enquiry.yacht_id,
+      yacht_name: enquiry.yacht_name,
+      client_name: enquiry.client_name,
+      client_email: enquiry.client_email,
+      client_phone: enquiry.client_phone || null,
+      preferred_dates: enquiry.preferred_dates,
+      embarkation_port: enquiry.embarkation_port || null,
+      disembarkation_port: enquiry.disembarkation_port || null,
+      notes: enquiry.notes || null,
+      status: "new",
+    }])
+    .select();
+  if (error) {
+    console.error("Error submitting enquiry:", error);
+    throw error;
+  }
+  return data?.[0] || null;
+}
