@@ -115,7 +115,6 @@ export async function deleteBooking(id) {
   const { error } = await supabase.from('yacht_bookings').delete().eq('id', id);
   if (error) throw error;
 }
-}
 
 // ── ENQUIRIES ──
 export async function submitEnquiry(proposalId, viewerName, shortlistedYachtIds, message) {
@@ -126,31 +125,7 @@ export async function submitEnquiry(proposalId, viewerName, shortlistedYachtIds,
   return data;
 }
 
-// ── AUTH ──
-export async function signIn(email, password) { const { data, error } = await supabase.auth.signInWithPassword({ email, password }); if (error) throw error; return data; }
-export async function signOut() { await supabase.auth.signOut(); }
-export async function getSession() { const { data } = await supabase.auth.getSession(); return data.session; }
-export function onAuthChange(cb) { return supabase.auth.onAuthStateChange(cb); }// ──────────────────────────────────────────────────────
-// ADD these functions to your existing src/lib/supabase.js
-// (append to the bottom, before any export statements)
-// ──────────────────────────────────────────────────────
-
-// ── Fetch bookings for a list of yacht IDs ──
-export async function getBookingsByYachtIds(yachtIds) {
-  if (!yachtIds || yachtIds.length === 0) return [];
-  const { data, error } = await supabase
-    .from("yacht_bookings")
-    .select("*")
-    .in("yacht_id", yachtIds)
-    .order("start_date", { ascending: true });
-  if (error) {
-    console.error("Error fetching bookings:", error);
-    return [];
-  }
-  return data || [];
-}
-
-// ── Submit a charter enquiry ──
+// ── CHARTER ENQUIRIES ──
 export async function submitCharterEnquiry(enquiry) {
   const { data, error } = await supabase
     .from("charter_enquiries")
@@ -174,3 +149,9 @@ export async function submitCharterEnquiry(enquiry) {
   }
   return data?.[0] || null;
 }
+
+// ── AUTH ──
+export async function signIn(email, password) { const { data, error } = await supabase.auth.signInWithPassword({ email, password }); if (error) throw error; return data; }
+export async function signOut() { await supabase.auth.signOut(); }
+export async function getSession() { const { data } = await supabase.auth.getSession(); return data.session; }
+export function onAuthChange(cb) { return supabase.auth.onAuthStateChange(cb); }
