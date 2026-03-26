@@ -1280,7 +1280,7 @@ export default function RoccabellaProposal() {
           gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
           gap: 24,
         }}>
-          {yachts.map((yacht) => (
+             {yachts.map((yacht) => (
             <div key={yacht.id}>
               <YachtCard
                 yacht={yacht}
@@ -1288,9 +1288,7 @@ export default function RoccabellaProposal() {
                 isFav={favourites.has(yacht.id)}
                 onToggleFav={toggleFav}
                 onSelect={setSelectedYacht}
-                imageUrl={getYachtImage(yacht)}
-              />
-              <AvailabilityCalendar
+                <AvailabilityCalendar
                 yacht={yacht}
                 bookings={(yachtBookings[yacht.name] || []).map(b => ({
                   start_date: b.start, end_date: b.end, status: b.status, route: b.route
@@ -1299,8 +1297,6 @@ export default function RoccabellaProposal() {
                 onSubmitEnquiry={submitCharterEnquiry}
               />
             </div>
-          ))}
-            />
           ))}
         </div>
       </div>
