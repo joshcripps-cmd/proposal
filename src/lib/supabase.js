@@ -61,9 +61,36 @@ export async function getAllYachts() {
 }
 
 export async function upsertYachts(yachts) {
-  const { data, error } = await supabase.from('yachts').upsert(yachts, { onConflict: 'name' }).select();
-  if (error) throw error;
-  return data;
+  const results = [];
+  for (const yacht of yachts) {
+    // Try to find existing yacht by name + builder (more unique than name alone)
+    const { data: existing } = await supabase
+      .from('yachts')
+      .select('id')
+      .eq('name', yacht.name)
+      .eq('builder', yacht.builder || '')
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      // Update existing yacht
+      const { data, error } = await supabase
+        .from('yachts')
+        .update({ ...yacht, updated_at: new Date().toISOString() })
+        .eq('id', existing[0].id)
+        .select();
+      if (error) { console.warn('Update error for', yacht.name, error); continue; }
+      if (data) results.push(...data);
+    } else {
+      // Insert new yacht
+      const { data, error } = await supabase
+        .from('yachts')
+        .insert(yacht)
+        .select();
+      if (error) { console.warn('Insert error for', yacht.name, error); continue; }
+      if (data) results.push(...data);
+    }
+  }
+  return results;
 }
 
 // ── ANALYTICS ──
