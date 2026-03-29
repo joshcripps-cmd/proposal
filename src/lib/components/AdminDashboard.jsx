@@ -85,12 +85,15 @@ function parseYachtfolioXLSX(file) {
 
 // ══════════════════════════════════════════════════
 // Booking PDF Parser (Yachtfolio format)
-// Handles both small (3-yacht) and large (20+ yacht) exports
+// The "Last update:" line contains the yacht name ON THE SAME LINE
+// Format: "Last update: [optional DD Mon YYYY HH:MM:SS] YACHT NAME"
 // ══════════════════════════════════════════════════
 const DATE_RE = /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}$/;
 const MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
 const SKIP_SET = new Set(['Start', 'End', 'Status', 'Booking list', 'No records to display']);
 const STATUS_RE = /^(Booked|Option|Transit|Shipyard|Boat Show|Unavailable)/i;
+// Extracts yacht name from "Last update: [optional datetime] NAME"
+const LAST_UPDATE_RE = /^Last update:\s*(?:\d{1,2}\s+\w{3}\s+\d{4}\s+\d{2}:\d{2}:\d{2}\s+)?(.*)$/;
 
 function parseDate(s) {
   if (!s) return null;
@@ -109,81 +112,75 @@ function toISO(d) {
 function parseBookingPDFText(rawText) {
   const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // Phase 1: Extract all yacht names (lines after "Last update:")
+  // Phase 1: Extract all yacht names from "Last update:" lines
+  // The yacht name is on the SAME line, after the optional date+time
   const yachtNames = [];
   const yachtMap = {};
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (line.startsWith('Last update')) {
-      // The yacht name is the next non-skip, non-date, non-"Last update" line
-      const candidate = lines[i + 1];
-      if (candidate &&
-          !candidate.startsWith('Last update') &&
-          !DATE_RE.test(candidate) &&
-          !SKIP_SET.has(candidate) &&
-          !candidate.match(/^\d{2}\/\d{2}\/\d{4}/) &&
-          !candidate.startsWith('YACHTFOLIO') &&
-          !candidate.match(/^https?:\/\//) &&
-          !candidate.match(/^\d+\/\d+$/)) {
-        if (!yachtMap[candidate]) {
-          yachtMap[candidate] = { name: candidate, bookings: [] };
-          yachtNames.push(candidate);
-        }
-        i++; // skip the name line
+    const m = LAST_UPDATE_RE.exec(line);
+    if (m) {
+      const name = (m[1] || '').trim();
+      if (name && !yachtMap[name]) {
+        yachtMap[name] = { name, bookings: [] };
+        yachtNames.push(name);
       }
     }
   }
 
-  // Phase 2: Walk through again, assigning bookings to the correct yacht
-  // In the Yachtfolio format, bookings appear after "Start End Status" headers
-  // in the same order as the yacht names appear
-  let yachtIndex = 0;
-  let startEndCount = 0;
+  // Phase 2: Walk through lines, assigning bookings to yachts
+  // Each "Start End Status" header begins a new yacht's booking table
+  // Tables appear in the same order as yacht names
+  let yachtIndex = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
     // Skip artifacts
-    if (SKIP_SET.has(line)) {
-      // "Start" header means a new booking table begins — advance yacht index
-      if (line === 'Start' && lines[i + 1] === 'End' && lines[i + 2] === 'Status') {
-        if (startEndCount > 0) yachtIndex++;
-        startEndCount++;
-        i += 2; // skip "End" and "Status"
-      }
-      continue;
-    }
     if (line.startsWith('Last update')) continue;
     if (line.match(/^\d{2}\/\d{2}\/\d{4}/)) continue;
     if (line.match(/^https?:\/\//)) continue;
     if (line.match(/^\d+\/\d+$/)) continue;
     if (line.startsWith('YACHTFOLIO')) continue;
-    // Skip yacht name lines (already captured)
+    if (line === 'No records to display') continue;
+    if (line === 'Booking list') continue;
+
+    // "Start" header with "End" and "Status" following = new booking table
+    if (line === 'Start' && i + 1 < lines.length && lines[i + 1] === 'End') {
+      yachtIndex++;
+      // Skip "End" and "Status" lines
+      i += 2;
+      continue;
+    }
+    if (line === 'End' || line === 'Status') continue;
+
+    // Skip yacht name lines that appear standalone (already captured above)
     if (yachtMap[line]) continue;
 
-    // Skip if we've run out of yachts
-    if (yachtIndex >= yachtNames.length) continue;
+    // Skip if we haven't seen a "Start End Status" header yet or ran out of yachts
+    if (yachtIndex < 0 || yachtIndex >= yachtNames.length) continue;
     const currentYacht = yachtMap[yachtNames[yachtIndex]];
 
-    // Parse booking rows: start date, end date, status + route
+    // Parse booking rows: start date, end date, then status + route
     if (DATE_RE.test(line)) {
       const startDate = parseDate(line);
       const nextLine = lines[i + 1];
       if (nextLine && DATE_RE.test(nextLine)) {
         const endDate = parseDate(nextLine);
-        // Gather status and route text
+        // Gather status and route text from lines after the end date
         let statusParts = [];
         let k = i + 2;
         while (
           k < lines.length &&
           !DATE_RE.test(lines[k]) &&
           !lines[k].startsWith('Last update') &&
-          !SKIP_SET.has(lines[k]) &&
+          lines[k] !== 'Start' &&
           !lines[k].match(/^\d{2}\/\d{2}\/\d{4}/) &&
           !lines[k].startsWith('YACHTFOLIO') &&
           !lines[k].match(/^https?:\/\//) &&
           !lines[k].match(/^\d+\/\d+$/) &&
-          !yachtMap[lines[k]]
+          !yachtMap[lines[k]] &&
+          lines[k] !== 'No records to display'
         ) {
           statusParts.push(lines[k]);
           k++;
@@ -206,7 +203,7 @@ function parseBookingPDFText(rawText) {
     }
   }
 
-  // Return only yachts that have bookings
+  // Return all yachts (including those with no bookings, for visibility)
   return yachtNames.map(n => yachtMap[n]).filter(y => y.bookings.length > 0);
 }
 
