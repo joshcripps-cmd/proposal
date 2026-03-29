@@ -407,7 +407,7 @@ function NewProposal() {
     }
   }, []);
 
-  // Handle Booking PDF upload
+  // Handle Booking PDF upload — v3 with debug
   const handlePdf = useCallback(async (file) => {
     if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
       setPdfStatus({ type: "error", message: "Please upload a PDF file." });
@@ -417,8 +417,17 @@ function NewProposal() {
     setPdfStatus(null);
     try {
       const text = await extractTextFromPDF(file);
+      // DEBUG: log first 500 chars so we can see what pdfjs produces
+      console.log("=== PDF RAW TEXT (first 500 chars) ===");
+      console.log(text.substring(0, 500));
+      console.log("=== PDF LINES (first 30) ===");
+      const debugLines = text.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 30);
+      debugLines.forEach((l, i) => console.log(`[${i}] |${l}|`));
+
       const parsed = parseBookingPDFText(text);
-      if (!parsed.length) throw new Error("No yachts found in PDF \u2014 check the format.");
+      console.log("=== PARSED YACHTS ===", parsed.length, parsed.map(y => y.name));
+
+      if (!parsed.length) throw new Error("No yachts found in PDF. Open browser console (F12) for debug output.");
       const totalBookings = parsed.reduce((sum, y) => sum + y.bookings.length, 0);
       setParsedBookings(parsed);
       setPdfStatus({
