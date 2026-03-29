@@ -1,17 +1,20 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Routes, Route, useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import {
   getAllProposals, createProposal, updateProposal, sendProposal,
   getAllYachts, upsertYachts, getProposalAnalytics,
-  getBookingsByYachtId, addBooking, deleteBooking,
 } from "../lib/supabase";
+import { supabase } from "../lib/supabase";
 
 // ── Brand ──
 const NAVY = "#0f1d2f";
 const RED = "#c43a2b";
 const GOLD = "#c9a96e";
 const CREAM = "#f7f5f0";
+const SLATE = "#64748b";
+const WHITE = "#fff";
+const BORDER = "#e2e0db";
 
 // ── VAT by jurisdiction ──
 const VAT_RATES = {
@@ -48,7 +51,6 @@ function parseYachtfolioXLSX(file) {
             return idx >= 0 ? row[idx] : null;
           };
 
-          // Extract brochure hyperlink
           const bCell = ws[XLSX.utils.encode_cell({ r: i, c: headers.findIndex(h => h.includes("brochure")) })];
           const brochureUrl = bCell?.l?.Target || bCell?.l?.address || null;
 
@@ -81,7 +83,179 @@ function parseYachtfolioXLSX(file) {
   });
 }
 
-// ── Styles ──
+// ══════════════════════════════════════════════════
+// Booking PDF Parser (Yachtfolio format)
+// ══════════════════════════════════════════════════
+const DATE_RE = /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}$/;
+const MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+
+function parseDate(s) {
+  if (!s) return null;
+  const p = s.trim().split(/\s+/);
+  if (p.length < 3) return null;
+  const d = parseInt(p[0]), m = MONTHS[p[1]], y = parseInt(p[2]);
+  if (isNaN(d) || m === undefined || isNaN(y)) return null;
+  return new Date(y, m, d);
+}
+
+function toISO(d) {
+  if (!d) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function parseBookingPDFText(rawText) {
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  const yachts = [];
+  let current = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (['Start', 'End', 'Status', 'Booking list'].includes(line)) continue;
+    if (line.match(/^\d{2}\/\d{2}\/\d{4}/)) continue;
+    if (line.match(/^https?:\/\//)) continue;
+    if (line.match(/^\d+\/\d+$/)) continue;
+    if (line.startsWith('YACHTFOLIO')) continue;
+
+    if (line.startsWith('Last update:')) {
+      const candidate = lines[i + 1];
+      if (candidate && !candidate.startsWith('Last update') && !DATE_RE.test(candidate) && candidate !== 'Start') {
+        current = {
+          name: candidate,
+          lastUpdate: line.replace('Last update:', '').trim(),
+          bookings: [],
+        };
+        yachts.push(current);
+        i++;
+      }
+      continue;
+    }
+
+    if (!current) continue;
+
+    if (DATE_RE.test(line)) {
+      const startDate = parseDate(line);
+      const nextLine = lines[i + 1];
+      if (nextLine && DATE_RE.test(nextLine)) {
+        const endDate = parseDate(nextLine);
+        let statusParts = [];
+        let k = i + 2;
+        while (
+          k < lines.length &&
+          !DATE_RE.test(lines[k]) &&
+          !lines[k].startsWith('Last update') &&
+          !['Start', 'End', 'Status'].includes(lines[k]) &&
+          !lines[k].match(/^\d{2}\/\d{2}\/\d{4}/) &&
+          !lines[k].startsWith('YACHTFOLIO')
+        ) {
+          statusParts.push(lines[k]);
+          k++;
+        }
+        const statusRaw = statusParts.join(' ').trim();
+        const typeMatch = statusRaw.match(/^(Booked|Option)/i);
+        const status = typeMatch ? (typeMatch[1].charAt(0).toUpperCase() + typeMatch[1].slice(1).toLowerCase()) : 'Booked';
+        const route = statusRaw.replace(/^(Booked|Option)\s*[-\u2013]?\s*/i, '').trim();
+
+        if (startDate && endDate) {
+          current.bookings.push({
+            start_date: toISO(startDate),
+            end_date: toISO(endDate),
+            status,
+            route,
+          });
+        }
+        i = k - 1;
+      }
+    }
+  }
+
+  return yachts;
+}
+
+async function extractTextFromPDF(file) {
+  const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(item => item.str).join('\n') + '\n';
+  }
+  return text;
+}
+
+async function saveBookingsForProposal(parsedYachts, proposalId, dbYachts) {
+  const results = { saved: 0, matched: 0, errors: [] };
+
+  // Build name -> id map from the yachts in the proposal
+  const nameMap = {};
+  for (const y of dbYachts) {
+    nameMap[y.name.toUpperCase()] = y.id;
+  }
+
+  // Also look up any yacht names from PDF that aren't in the proposal set
+  const unmatchedNames = parsedYachts
+    .map(y => y.name.toUpperCase())
+    .filter(n => !nameMap[n]);
+
+  if (unmatchedNames.length > 0) {
+    const { data } = await supabase
+      .from('yachts')
+      .select('id, name')
+      .in('name', unmatchedNames);
+    if (data) {
+      for (const y of data) {
+        if (!nameMap[y.name.toUpperCase()]) {
+          nameMap[y.name.toUpperCase()] = y.id;
+        }
+      }
+    }
+  }
+
+  // Delete existing bookings for this proposal (refresh)
+  if (proposalId) {
+    await supabase.from('yacht_bookings').delete().eq('proposal_id', proposalId);
+  }
+
+  // Build all booking rows
+  const allRows = [];
+  for (const yacht of parsedYachts) {
+    const yachtId = nameMap[yacht.name.toUpperCase()] || null;
+    if (yachtId) results.matched++;
+    for (const b of yacht.bookings) {
+      allRows.push({
+        proposal_id: proposalId,
+        yacht_id: yachtId,
+        yacht_name: yacht.name,
+        start_date: b.start_date,
+        end_date: b.end_date,
+        status: b.status,
+        route: b.route,
+      });
+    }
+  }
+
+  if (allRows.length > 0) {
+    for (let i = 0; i < allRows.length; i += 50) {
+      const batch = allRows.slice(i, i + 50);
+      const { error } = await supabase.from('yacht_bookings').insert(batch);
+      if (error) {
+        results.errors.push(error.message);
+      } else {
+        results.saved += batch.length;
+      }
+    }
+  }
+
+  return results;
+}
+
+// ══════════════════════════════════════════════════
+// Styles
+// ══════════════════════════════════════════════════
 const S = {
   page: { minHeight: "100vh", background: CREAM, fontFamily: "'Inter', sans-serif" },
   header: { background: NAVY, padding: "20px 32px", display: "flex", justifyContent: "space-between", alignItems: "center" },
@@ -93,9 +267,15 @@ const S = {
   input: { width: "100%", padding: "12px 16px", border: "1px solid #ddd", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" },
   select: { width: "100%", padding: "12px 16px", border: "1px solid #ddd", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box", background: "#fff" },
   textarea: { width: "100%", padding: "12px 16px", border: "1px solid #ddd", borderRadius: 8, fontSize: 14, outline: "none", minHeight: 100, resize: "vertical", boxSizing: "border-box" },
+  statusOk: { background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "10px 14px", fontSize: 13, marginTop: 12 },
+  statusErr: { background: "#fee2e2", color: "#991b1b", borderRadius: 8, padding: "10px 14px", fontSize: 13, marginTop: 12 },
+  statusInfo: { background: "#dbeafe", color: "#1e40af", borderRadius: 8, padding: "10px 14px", fontSize: 13, marginTop: 12 },
+  yachtPill: { display: 'inline-block', background: NAVY, color: '#fff', borderRadius: 20, fontSize: 11, padding: '3px 10px', margin: '2px 4px' },
 };
 
-// ── Proposal List ──
+// ══════════════════════════════════════════════════
+// Proposal List
+// ══════════════════════════════════════════════════
 function ProposalList() {
   const [proposals, setProposals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -109,10 +289,7 @@ function ProposalList() {
     <div style={S.page}>
       <div style={S.header}>
         <div style={S.title}>ROCCABELLA — PROPOSALS</div>
-        <div style={{ display: "flex", gap: 12 }}>
-          <button style={S.btnOutline} onClick={() => navigate("/admin/bookings")}>📅 Bookings</button>
-          <button style={S.btn} onClick={() => navigate("/admin/new")}>+ New Proposal</button>
-        </div>
+        <button style={S.btn} onClick={() => navigate("/admin/new")}>+ New Proposal</button>
       </div>
       <div style={{ maxWidth: 1000, margin: "0 auto", padding: "32px 24px" }}>
         {loading ? <div style={{ color: "#999", textAlign: "center", padding: 40 }}>Loading...</div> : (
@@ -146,46 +323,95 @@ function ProposalList() {
   );
 }
 
-// ── New Proposal ──
+// ══════════════════════════════════════════════════
+// New Proposal
+// ══════════════════════════════════════════════════
 function NewProposal() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1); // 1: upload, 2: configure, 3: done
+  const xlsxRef = useRef(null);
+  const pdfRef = useRef(null);
+
+  const [step, setStep] = useState(1);
   const [parsedYachts, setParsedYachts] = useState([]);
   const [selectedYachtIds, setSelectedYachtIds] = useState(new Set());
-  const [dbYachts, setDbYachts] = useState([]); // yachts after upsert
+  const [dbYachts, setDbYachts] = useState([]);
   const [form, setForm] = useState({
     client_name: "", title: "", destination: "", discount: 0,
     broker_friendly: false, message: "", itinerary_link: "",
   });
-  const [uploading, setUploading] = useState(false);
+
+  // Upload states
+  const [xlsxUploading, setXlsxUploading] = useState(false);
+  const [xlsxStatus, setXlsxStatus] = useState(null);
+  const [xlsxDone, setXlsxDone] = useState(false);
+
+  const [pdfUploading, setPdfUploading] = useState(false);
+  const [pdfStatus, setPdfStatus] = useState(null);
+  const [parsedBookings, setParsedBookings] = useState(null);
+
   const [saving, setSaving] = useState(false);
   const [createdProposal, setCreatedProposal] = useState(null);
 
-  const handleFile = useCallback(async (e) => {
-    const file = e.target.files?.[0];
+  // Handle XLSX upload
+  const handleXlsx = useCallback(async (file) => {
     if (!file) return;
-    setUploading(true);
+    setXlsxUploading(true);
+    setXlsxStatus(null);
     try {
       const yachts = await parseYachtfolioXLSX(file);
       setParsedYachts(yachts);
       setSelectedYachtIds(new Set(yachts.map((_, i) => i)));
-      // Upsert to Supabase
       const saved = await upsertYachts(yachts);
       setDbYachts(saved);
-      setStep(2);
+      setXlsxDone(true);
+      setXlsxStatus({ type: "success", message: `${saved.length} yacht${saved.length !== 1 ? 's' : ''} loaded from ${file.name}` });
     } catch (err) {
-      alert("Failed to parse XLSX: " + err.message);
+      setXlsxStatus({ type: "error", message: "Failed to parse XLSX: " + err.message });
     } finally {
-      setUploading(false);
+      setXlsxUploading(false);
     }
   }, []);
 
+  // Handle Booking PDF upload
+  const handlePdf = useCallback(async (file) => {
+    if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
+      setPdfStatus({ type: "error", message: "Please upload a PDF file." });
+      return;
+    }
+    setPdfUploading(true);
+    setPdfStatus(null);
+    try {
+      const text = await extractTextFromPDF(file);
+      const parsed = parseBookingPDFText(text);
+      if (!parsed.length) throw new Error("No yachts found in PDF \u2014 check the format.");
+      const totalBookings = parsed.reduce((sum, y) => sum + y.bookings.length, 0);
+      setParsedBookings(parsed);
+      setPdfStatus({
+        type: "success",
+        message: `${totalBookings} booking${totalBookings !== 1 ? 's' : ''} parsed for ${parsed.length} yacht${parsed.length !== 1 ? 's' : ''}`,
+        yachts: parsed,
+      });
+    } catch (err) {
+      setPdfStatus({ type: "error", message: "Failed to parse PDF: " + err.message });
+    } finally {
+      setPdfUploading(false);
+    }
+  }, []);
+
+  // Create proposal + save bookings
   const handleCreate = async () => {
     if (!form.client_name || !form.title) { alert("Client name and title are required."); return; }
     setSaving(true);
     try {
       const selectedDbIds = dbYachts.filter((_, i) => selectedYachtIds.has(i)).map(y => y.id);
       const prop = await createProposal({ ...form, yacht_ids: selectedDbIds });
+
+      // Save bookings if PDF was uploaded
+      if (parsedBookings && parsedBookings.length > 0) {
+        const bookingResult = await saveBookingsForProposal(parsedBookings, prop.id, dbYachts);
+        console.log("Bookings saved:", bookingResult);
+      }
+
       setCreatedProposal(prop);
       setStep(3);
     } catch (err) {
@@ -199,39 +425,146 @@ function NewProposal() {
     <div style={S.page}>
       <div style={S.header}>
         <div style={S.title}>NEW PROPOSAL</div>
-        <button style={S.btnOutline} onClick={() => navigate("/admin")}>← Back</button>
+        <button style={{ ...S.btnOutline, color: "#fff", borderColor: "rgba(255,255,255,0.3)" }} onClick={() => navigate("/admin")}>&larr; Back</button>
       </div>
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "32px 24px" }}>
-        {/* Step 1: Upload */}
+
+        {/* ── Step 1: Upload XLSX + PDF ── */}
         {step === 1 && (
-          <div style={{ ...S.card, textAlign: "center", padding: 60 }}>
-            <div style={{ fontSize: 40, marginBottom: 16 }}>📤</div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: NAVY, marginBottom: 8 }}>Upload Yachtfolio XLSX</div>
-            <div style={{ fontSize: 14, color: "#777", marginBottom: 24 }}>Quick Comparison export from Yachtfolio. Yachts will be upserted to the database.</div>
-            <label style={{ ...S.btn, display: "inline-block", cursor: "pointer" }}>
-              {uploading ? "Processing..." : "Choose File"}
-              <input type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} />
-            </label>
+          <div>
+            {/* XLSX Upload */}
+            <div style={S.card}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 28 }}>📊</div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: NAVY }}>Yachtfolio XLSX</div>
+                  <div style={{ fontSize: 13, color: SLATE }}>Quick Comparison export &mdash; yacht specs and pricing</div>
+                </div>
+                {xlsxDone && <div style={{ marginLeft: "auto", color: "#22c55e", fontWeight: 600, fontSize: 20 }}>&#10003;</div>}
+              </div>
+
+              <div
+                style={{
+                  border: `2px dashed ${xlsxDone ? "#22c55e" : BORDER}`,
+                  borderRadius: 10, padding: 28, textAlign: "center", cursor: "pointer",
+                  background: xlsxDone ? "#f0fdf4" : WHITE,
+                  transition: "all 0.15s",
+                }}
+                onClick={() => xlsxRef.current?.click()}
+              >
+                <input ref={xlsxRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+                  onChange={e => { handleXlsx(e.target.files[0]); e.target.value = ''; }} />
+                <div style={{ fontSize: 14, fontWeight: 600, color: xlsxDone ? "#166534" : NAVY }}>
+                  {xlsxUploading ? "Processing\u2026" : xlsxDone ? "\u2713 XLSX Loaded \u2014 click to replace" : "Click to upload XLSX"}
+                </div>
+                <div style={{ fontSize: 12, color: SLATE, marginTop: 4 }}>Yachtfolio Quick Comparison export</div>
+              </div>
+
+              {xlsxStatus && (
+                <div style={xlsxStatus.type === "success" ? S.statusOk : S.statusErr}>
+                  {xlsxStatus.type === "success" ? "\u2713 " : "\u2717 "}{xlsxStatus.message}
+                </div>
+              )}
+            </div>
+
+            {/* PDF Upload */}
+            <div style={S.card}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 28 }}>📋</div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: NAVY }}>Booking PDF</div>
+                  <div style={{ fontSize: 13, color: SLATE }}>Yachtfolio booking list &mdash; availability and routes (optional)</div>
+                </div>
+                {parsedBookings && <div style={{ marginLeft: "auto", color: "#22c55e", fontWeight: 600, fontSize: 20 }}>&#10003;</div>}
+              </div>
+
+              <div
+                style={{
+                  border: `2px dashed ${parsedBookings ? "#22c55e" : BORDER}`,
+                  borderRadius: 10, padding: 28, textAlign: "center", cursor: "pointer",
+                  background: parsedBookings ? "#f0fdf4" : WHITE,
+                  transition: "all 0.15s",
+                }}
+                onClick={() => pdfRef.current?.click()}
+              >
+                <input ref={pdfRef} type="file" accept=".pdf" style={{ display: "none" }}
+                  onChange={e => { handlePdf(e.target.files[0]); e.target.value = ''; }} />
+                <div style={{ fontSize: 14, fontWeight: 600, color: parsedBookings ? "#166534" : NAVY }}>
+                  {pdfUploading ? "Parsing PDF\u2026" : parsedBookings ? "\u2713 Bookings loaded \u2014 click to replace" : "Click to upload PDF"}
+                </div>
+                <div style={{ fontSize: 12, color: SLATE, marginTop: 4 }}>Booking data shows as availability calendar in the proposal</div>
+              </div>
+
+              {pdfStatus && (
+                <div style={pdfStatus.type === "success" ? S.statusOk : S.statusErr}>
+                  {pdfStatus.type === "success" ? "\u2713 " : "\u2717 "}{pdfStatus.message}
+                  {pdfStatus.yachts && (
+                    <div style={{ marginTop: 6 }}>
+                      {pdfStatus.yachts.map(y => (
+                        <span key={y.name} style={S.yachtPill}>
+                          {y.name} ({y.bookings.length})
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Continue button */}
+            <div style={{ textAlign: "center", marginTop: 24 }}>
+              <button
+                style={{
+                  ...S.btn,
+                  opacity: xlsxDone ? 1 : 0.4,
+                  cursor: xlsxDone ? "pointer" : "not-allowed",
+                  padding: "14px 48px",
+                  fontSize: 14,
+                }}
+                disabled={!xlsxDone}
+                onClick={() => setStep(2)}
+              >
+                Continue to Proposal Details &rarr;
+              </button>
+              {!xlsxDone && (
+                <div style={{ fontSize: 12, color: SLATE, marginTop: 8 }}>Upload the XLSX first to continue</div>
+              )}
+            </div>
           </div>
         )}
 
-        {/* Step 2: Configure */}
+        {/* ── Step 2: Configure ── */}
         {step === 2 && (
           <>
             {/* Yacht selection */}
             <div style={{ ...S.card, marginBottom: 24 }}>
-              <div style={{ ...S.label, marginBottom: 16 }}>Yachts from upload ({dbYachts.length})</div>
-              {dbYachts.map((y, i) => (
-                <label key={y.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid #f0f0f0", cursor: "pointer" }}>
-                  <input type="checkbox" checked={selectedYachtIds.has(i)} onChange={() => {
-                    setSelectedYachtIds(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
-                  }} />
-                  <div>
-                    <div style={{ fontWeight: 600, color: NAVY }}>{y.name}</div>
-                    <div style={{ fontSize: 12, color: "#999" }}>{y.length_m}m · {y.builder} · {y.guests} guests · €{(y.price_low || 0).toLocaleString()}–€{(y.price_high || 0).toLocaleString()}/wk</div>
-                  </div>
-                </label>
-              ))}
+              <div style={{ ...S.label, marginBottom: 16 }}>
+                Yachts from upload ({dbYachts.length})
+                {parsedBookings && (
+                  <span style={{ color: "#22c55e", fontWeight: 400, textTransform: "none", letterSpacing: 0, marginLeft: 12 }}>
+                    + booking data for {parsedBookings.length} yacht{parsedBookings.length !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              {dbYachts.map((y, i) => {
+                const hasBookings = parsedBookings?.some(pb => pb.name.toUpperCase() === y.name.toUpperCase());
+                return (
+                  <label key={y.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid #f0f0f0", cursor: "pointer" }}>
+                    <input type="checkbox" checked={selectedYachtIds.has(i)} onChange={() => {
+                      setSelectedYachtIds(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
+                    }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, color: NAVY }}>
+                        {y.name}
+                        {hasBookings && <span style={{ marginLeft: 8, fontSize: 11, color: "#22c55e", fontWeight: 500 }}>📅 bookings</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#999" }}>
+                        {y.length_m}m &middot; {y.builder} &middot; {y.guests} guests &middot; &euro;{(y.price_low || 0).toLocaleString()}&ndash;&euro;{(y.price_high || 0).toLocaleString()}/wk
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
             </div>
 
             {/* Proposal details */}
@@ -261,8 +594,8 @@ function NewProposal() {
                 <div>
                   <div style={S.label}>Mode</div>
                   <select style={S.select} value={form.broker_friendly ? "broker" : "client"} onChange={e => setForm(f => ({ ...f, broker_friendly: e.target.value === "broker" }))}>
-                    <option value="client">Client-facing (Roccabella branding + broker details)</option>
-                    <option value="broker">Broker-friendly (neutral — no branding or broker info)</option>
+                    <option value="client">Client-facing (full branding)</option>
+                    <option value="broker">Broker-friendly (clean/white-label)</option>
                   </select>
                 </div>
               </div>
@@ -270,21 +603,29 @@ function NewProposal() {
                 <div style={S.label}>Personal Message</div>
                 <textarea style={S.textarea} value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))} placeholder="Following our conversation, I've curated a selection of exceptional yachts..." />
               </div>
-              <button style={{ ...S.btn, width: "100%" }} onClick={handleCreate} disabled={saving}>
-                {saving ? "Creating..." : `Create Proposal with ${selectedYachtIds.size} Yachts`}
-              </button>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button style={S.btnOutline} onClick={() => setStep(1)}>&larr; Back</button>
+                <button style={{ ...S.btn, flex: 1 }} onClick={handleCreate} disabled={saving}>
+                  {saving ? "Creating\u2026" : `Create Proposal with ${selectedYachtIds.size} Yacht${selectedYachtIds.size !== 1 ? 's' : ''}${parsedBookings ? ' + Bookings' : ''}`}
+                </button>
+              </div>
             </div>
           </>
         )}
 
-        {/* Step 3: Done */}
+        {/* ── Step 3: Done ── */}
         {step === 3 && createdProposal && (
           <div style={{ ...S.card, textAlign: "center", padding: 60 }}>
             <div style={{ fontSize: 40, marginBottom: 16 }}>✅</div>
             <div style={{ fontSize: 18, fontWeight: 600, color: NAVY, marginBottom: 8 }}>Proposal Created</div>
-            <div style={{ fontSize: 14, color: "#777", marginBottom: 24 }}>
-              <strong>{createdProposal.client_name}</strong> — {createdProposal.title}
+            <div style={{ fontSize: 14, color: "#777", marginBottom: 8 }}>
+              <strong>{createdProposal.client_name}</strong> &mdash; {createdProposal.title}
             </div>
+            {parsedBookings && (
+              <div style={{ fontSize: 13, color: "#22c55e", marginBottom: 16 }}>
+                📅 Booking data saved for {parsedBookings.length} yacht{parsedBookings.length !== 1 ? 's' : ''}
+              </div>
+            )}
             <div style={{ background: "#f5f5f5", padding: "14px 20px", borderRadius: 8, fontFamily: "monospace", fontSize: 14, marginBottom: 24, wordBreak: "break-all" }}>
               {window.location.origin}/p/{createdProposal.slug}
             </div>
@@ -293,7 +634,7 @@ function NewProposal() {
               <button style={S.btnOutline} onClick={() => window.open(`/p/${createdProposal.slug}`, "_blank")}>Preview</button>
               <button style={S.btnOutline} onClick={() => navigate("/admin")}>Back to Dashboard</button>
             </div>
-            <div style={{ fontSize: 12, color: "#aaa", marginTop: 16 }}>Status: <strong>Draft</strong> — Click "Send" from the dashboard to mark as sent.</div>
+            <div style={{ fontSize: 12, color: "#aaa", marginTop: 16 }}>Status: <strong>Draft</strong> &mdash; Click "Send" from the dashboard to mark as sent.</div>
           </div>
         )}
       </div>
@@ -301,425 +642,10 @@ function NewProposal() {
   );
 }
 
-// ── Router ──
-// ── Booking Manager ──
-function BookingManager() {
-  const [yachts, setYachts] = useState([]);
-  const [selectedYacht, setSelectedYacht] = useState(null);
-  const [bookings, setBookings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ start_date: "", end_date: "", status: "Booked", route: "" });
-  const [pdfParsed, setPdfParsed] = useState(null); // { yachtName: [{start, end, status, route}] }
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    getAllYachts().then(y => { setYachts(y || []); setLoading(false); }).catch(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    if (!selectedYacht) { setBookings([]); return; }
-    setLoading(true);
-    getBookingsByYachtId(selectedYacht.id)
-      .then(b => { setBookings(b || []); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [selectedYacht]);
-
-  // Parse Yachtfolio booking PDF text
-  const parseBookingPdf = async (file) => {
-    const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs");
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = "";
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      fullText += content.items.map(item => item.str).join(" ") + "\n";
-    }
-    return parseBookingText(fullText);
-  };
-
-  const parseBookingText = (text) => {
-    const results = {};
-    // Match date patterns: "13 Jun 2026" or "02 Jul 2026"
-    const dateRe = /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/gi;
-    const months = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
-    const parseDate = (str) => {
-      const parts = str.trim().split(/\s+/);
-      if (parts.length !== 3) return null;
-      const d = parts[0].padStart(2, "0");
-      const m = months[parts[1].toLowerCase()];
-      return m ? `${parts[2]}-${m}-${d}` : null;
-    };
-
-    // Split text into lines and find yacht sections
-    const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-    let currentYacht = null;
-
-    // Known yacht name patterns: all-caps words that appear before date patterns
-    // Yachtfolio format: "Last update: DATE YACHT_NAME" or just "YACHT_NAME" as header
-    const yachtNameRe = /(?:Last update:.*?\d{2}:\d{2}:\d{2}\s+)?([\w''\-\s]+?)(?=\s+Start|\s+\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))/i;
-
-    for (const line of lines) {
-      // Try to find yacht name — typically all caps, sometimes after "Last update: ..."
-      const nameMatch = line.match(/Last update:.*?\d{2}:\d{2}:\d{2}\s+(.+)/);
-      if (nameMatch) {
-        currentYacht = nameMatch[1].trim();
-        if (!results[currentYacht]) results[currentYacht] = [];
-        continue;
-      }
-
-      // Check if line is just a yacht name (all caps, short)
-      if (line.length < 40 && line === line.toUpperCase() && !line.match(/\d/) && line.match(/^[A-Z\s'''\-]+$/)) {
-        currentYacht = line.trim();
-        if (!results[currentYacht]) results[currentYacht] = [];
-        continue;
-      }
-
-      if (!currentYacht) continue;
-
-      // Find date pairs in the line
-      const dates = [...line.matchAll(dateRe)].map(m => m[1]);
-      if (dates.length >= 2) {
-        const startDate = parseDate(dates[0]);
-        const endDate = parseDate(dates[1]);
-        if (!startDate || !endDate) continue;
-
-        // Extract status
-        let status = "Booked";
-        if (/\bOption\b/i.test(line)) status = "Option";
-        else if (/\bHold\b/i.test(line)) status = "Hold";
-        else if (/\bBlocked\b/i.test(line)) status = "Blocked";
-
-        // Extract route — text after status keyword, typically "- Location to Location"
-        let route = null;
-        const routeMatch = line.match(/(?:Booked|Option|Hold|Blocked)\s*-\s*(.+)/i);
-        if (routeMatch) route = routeMatch[1].trim();
-
-        results[currentYacht].push({ start: startDate, end: endDate, status, route });
-      }
-    }
-    return results;
-  };
-
-  const handlePdfUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImporting(true);
-    setImportResult(null);
-    setPdfParsed(null);
-    try {
-      const parsed = await parseBookingPdf(file);
-      const yachtCount = Object.keys(parsed).length;
-      const bookingCount = Object.values(parsed).reduce((sum, arr) => sum + arr.length, 0);
-      if (bookingCount === 0) {
-        setImportResult({ success: false, message: "No booking data found in this PDF. Make sure it's a Yachtfolio Booking List export." });
-      } else {
-        setPdfParsed(parsed);
-        setImportResult({ success: true, message: `Found ${bookingCount} bookings for ${yachtCount} yacht${yachtCount > 1 ? "s" : ""}.` });
-      }
-    } catch (err) {
-      setImportResult({ success: false, message: "Failed to parse PDF: " + err.message });
-    }
-    setImporting(false);
-  };
-
-  const handleImportAll = async () => {
-    if (!pdfParsed) return;
-    setImporting(true);
-    let imported = 0;
-    let skipped = 0;
-    const errors = [];
-
-    for (const [yachtName, entries] of Object.entries(pdfParsed)) {
-      // Match yacht name to database
-      const yacht = yachts.find(y => y.name.toUpperCase() === yachtName.toUpperCase());
-      if (!yacht) {
-        skipped += entries.length;
-        errors.push(`${yachtName}: not found in database`);
-        continue;
-      }
-      for (const entry of entries) {
-        try {
-          await addBooking({
-            yacht_id: yacht.id,
-            start_date: entry.start,
-            end_date: entry.end,
-            status: entry.status,
-            route: entry.route || null,
-          });
-          imported++;
-        } catch (e) {
-          errors.push(`${yachtName} ${entry.start}: ${e.message}`);
-        }
-      }
-    }
-
-    setPdfParsed(null);
-    setImportResult({
-      success: true,
-      message: `Imported ${imported} booking${imported !== 1 ? "s" : ""}${skipped > 0 ? `, skipped ${skipped} (yacht not found)` : ""}.${errors.length > 0 ? " Issues: " + errors.slice(0, 3).join("; ") : ""}`,
-    });
-
-    // Refresh bookings if a yacht is selected
-    if (selectedYacht) {
-      const updated = await getBookingsByYachtId(selectedYacht.id);
-      setBookings(updated || []);
-    }
-    setImporting(false);
-  };
-
-  const handleAdd = async () => {
-    if (!selectedYacht || !form.start_date || !form.end_date) return;
-    setSaving(true);
-    try {
-      await addBooking({
-        yacht_id: selectedYacht.id,
-        start_date: form.start_date,
-        end_date: form.end_date,
-        status: form.status,
-        route: form.route || null,
-      });
-      const updated = await getBookingsByYachtId(selectedYacht.id);
-      setBookings(updated || []);
-      setForm({ start_date: "", end_date: "", status: "Booked", route: "" });
-    } catch (e) {
-      alert("Failed to add booking: " + e.message);
-    }
-    setSaving(false);
-  };
-
-  const handleDelete = async (id) => {
-    if (!confirm("Delete this booking?")) return;
-    try {
-      await deleteBooking(id);
-      setBookings(bookings.filter(b => b.id !== id));
-    } catch (e) {
-      alert("Failed to delete: " + e.message);
-    }
-  };
-
-  const formatDate = (d) => {
-    if (!d) return "—";
-    return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-  };
-
-  return (
-    <div style={S.page}>
-      <div style={S.header}>
-        <div style={S.title}>BOOKING MANAGER</div>
-        <button style={S.btnOutline} onClick={() => navigate("/admin")}>← Back</button>
-      </div>
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "32px 24px" }}>
-
-        {/* PDF Upload */}
-        <div style={{ ...S.card, marginBottom: 24 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: NAVY, marginBottom: 4 }}>
-            Import from Yachtfolio
-          </div>
-          <div style={{ fontSize: 12, color: "#999", marginBottom: 16 }}>
-            Export a Booking List PDF from Yachtfolio and upload it here. Bookings will be matched to yachts in your database by name.
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <input type="file" accept=".pdf" onChange={handlePdfUpload} disabled={importing} style={{ fontSize: 13 }} />
-            {importing && <span style={{ color: GOLD, fontSize: 13, fontWeight: 500 }}>Processing...</span>}
-          </div>
-          {importResult && (
-            <div style={{
-              marginTop: 12, padding: "10px 16px", borderRadius: 8, fontSize: 13,
-              background: importResult.success ? "#ecfdf5" : "#fef2f2",
-              color: importResult.success ? "#065f46" : "#991b1b",
-            }}>
-              {importResult.message}
-            </div>
-          )}
-          {pdfParsed && (
-            <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: NAVY, marginBottom: 8 }}>Preview:</div>
-              {Object.entries(pdfParsed).map(([name, entries]) => {
-                const matched = yachts.find(y => y.name.toUpperCase() === name.toUpperCase());
-                return (
-                  <div key={name} style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: matched ? NAVY : "#999" }}>
-                      {name} {matched ? "✓" : "✗ not in database"}
-                      <span style={{ fontWeight: 400, color: "#999", marginLeft: 8 }}>{entries.length} booking{entries.length !== 1 ? "s" : ""}</span>
-                    </div>
-                    {entries.slice(0, 3).map((e, i) => (
-                      <div key={i} style={{ fontSize: 12, color: "#777", marginLeft: 16 }}>
-                        {e.start} → {e.end} · {e.status}{e.route ? ` · ${e.route}` : ""}
-                      </div>
-                    ))}
-                    {entries.length > 3 && <div style={{ fontSize: 11, color: "#aaa", marginLeft: 16 }}>+{entries.length - 3} more</div>}
-                  </div>
-                );
-              })}
-              <button style={{ ...S.btn, marginTop: 12 }} onClick={handleImportAll} disabled={importing}>
-                {importing ? "Importing..." : "Import All Bookings"}
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Manual entry — Yacht selector */}
-        <div style={{ ...S.card, marginBottom: 24 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: NAVY, marginBottom: 4 }}>Manual Entry</div>
-          <div style={{ fontSize: 12, color: "#999", marginBottom: 12 }}>Select a yacht to add individual bookings or view existing ones.</div>
-          <select
-            style={S.select}
-            value={selectedYacht?.id || ""}
-            onChange={e => {
-              const y = yachts.find(y => y.id === e.target.value);
-              setSelectedYacht(y || null);
-            }}
-          >
-            <option value="">— Choose a yacht —</option>
-            {yachts.map(y => (
-              <option key={y.id} value={y.id}>{y.name} ({y.length_m}m · {y.builder})</option>
-            ))}
-          </select>
-        </div>
-
-        {selectedYacht && (
-          <>
-            {/* Add booking form */}
-            <div style={{ ...S.card, marginBottom: 24 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: NAVY, marginBottom: 16 }}>
-                Add Booking — {selectedYacht.name}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 2fr", gap: 12, marginBottom: 16 }}>
-                <div>
-                  <div style={S.label}>Start Date</div>
-                  <input type="date" style={S.input} value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} />
-                </div>
-                <div>
-                  <div style={S.label}>End Date</div>
-                  <input type="date" style={S.input} value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} />
-                </div>
-                <div>
-                  <div style={S.label}>Status</div>
-                  <select style={S.select} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-                    <option value="Booked">Booked</option>
-                    <option value="Option">Option</option>
-                    <option value="Hold">Hold</option>
-                    <option value="Blocked">Blocked</option>
-                  </select>
-                </div>
-                <div>
-                  <div style={S.label}>Route / Notes</div>
-                  <input style={S.input} placeholder="e.g. Athens to Mykonos" value={form.route} onChange={e => setForm(f => ({ ...f, route: e.target.value }))} />
-                </div>
-              </div>
-              <button style={S.btn} onClick={handleAdd} disabled={saving || !form.start_date || !form.end_date}>
-                {saving ? "Saving..." : "+ Add Booking"}
-              </button>
-            </div>
-
-            {/* Existing bookings */}
-            <div style={S.card}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: NAVY, marginBottom: 16 }}>
-                Current Bookings ({bookings.length})
-              </div>
-              {loading ? (
-                <div style={{ color: "#999", padding: 20, textAlign: "center" }}>Loading...</div>
-              ) : bookings.length === 0 ? (
-                <div style={{ color: "#999", padding: 20, textAlign: "center" }}>No bookings yet for {selectedYacht.name}</div>
-              ) : (
-                <div style={{ border: "1px solid #eee", borderRadius: 8, overflow: "hidden" }}>
-                  <div style={{
-                    display: "grid", gridTemplateColumns: "1fr 1fr 90px 2fr 50px",
-                    padding: "10px 16px", background: NAVY, color: "rgba(255,255,255,0.7)",
-                    fontSize: 10, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase",
-                  }}>
-                    <div>Start</div><div>End</div><div>Status</div><div>Route</div><div></div>
-                  </div>
-                  {bookings.map((b, i) => (
-                    <div key={b.id} style={{
-                      display: "grid", gridTemplateColumns: "1fr 1fr 90px 2fr 50px",
-                      padding: "10px 16px", borderBottom: i < bookings.length - 1 ? "1px solid #f0f0f0" : "none",
-                      background: i % 2 === 0 ? "#fafaf8" : "#fff", fontSize: 13, color: NAVY, alignItems: "center",
-                    }}>
-                      <div>{formatDate(b.start_date)}</div>
-                      <div>{formatDate(b.end_date)}</div>
-                      <div>
-                        <span style={{
-                          display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-                          background: b.status === "Option" ? "#fef3cd" : b.status === "Hold" ? "#d1ecf1" : b.status === "Blocked" ? "#e2e3e5" : "#fecdd3",
-                          color: b.status === "Option" ? "#856404" : b.status === "Hold" ? "#0c5460" : b.status === "Blocked" ? "#383d41" : "#9b1c31",
-                        }}>{b.status}</span>
-                      </div>
-                      <div style={{ color: "#777", fontSize: 12 }}>{b.route || "—"}</div>
-                      <div>
-                        <button onClick={() => handleDelete(b.id)} style={{
-                          background: "none", border: "none", color: RED, cursor: "pointer", fontSize: 16,
-                        }}>×</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── PIN Gate ──
-const ADMIN_PIN = "2026";
-const AUTH_KEY = "rb_proposals_auth";
-
-function PinGate({ onSuccess }) {
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState(false);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (pin === ADMIN_PIN) {
-      sessionStorage.setItem(AUTH_KEY, "1");
-      onSuccess();
-    } else {
-      setError(true);
-      setPin("");
-    }
-  };
-
-  return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: CREAM, fontFamily: "Inter, sans-serif" }}>
-      <div style={{ textAlign: "center", maxWidth: 380, width: "100%", padding: 32 }}>
-        <div style={{ fontSize: 28, fontWeight: 300, letterSpacing: 6, color: NAVY, marginBottom: 4 }}>ROCCABELLA</div>
-        <div style={{ fontSize: 11, letterSpacing: 4, color: "#999", marginBottom: 40 }}>YACHTS</div>
-        <div style={{ fontSize: 13, color: NAVY, fontWeight: 600, letterSpacing: 2, marginBottom: 24, textTransform: "uppercase" }}>Proposal Manager</div>
-        <form onSubmit={handleSubmit}>
-          <input
-            type="password"
-            inputMode="numeric"
-            maxLength={6}
-            value={pin}
-            onChange={(e) => { setPin(e.target.value); setError(false); }}
-            placeholder="Enter PIN"
-            style={{
-              width: "100%", padding: "14px 20px", border: error ? `2px solid ${RED}` : "1px solid #ccc",
-              borderRadius: 8, fontSize: 16, textAlign: "center", letterSpacing: 8, outline: "none",
-              boxSizing: "border-box", marginBottom: 16, background: "#fff",
-            }}
-            autoFocus
-          />
-          {error && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>Incorrect PIN</div>}
-          <button type="submit" style={{ ...S.btn, width: "100%", padding: "14px 24px" }}>Access Dashboard</button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
+// ══════════════════════════════════════════════════
+// Router
+// ══════════════════════════════════════════════════
 export default function AdminDashboard() {
-  const [authed, setAuthed] = useState(() => sessionStorage.getItem(AUTH_KEY) === "1");
-
-  // Load fonts
   useEffect(() => {
     const link = document.createElement("link");
     link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap";
@@ -727,13 +653,10 @@ export default function AdminDashboard() {
     document.head.appendChild(link);
   }, []);
 
-  if (!authed) return <PinGate onSuccess={() => setAuthed(true)} />;
-
   return (
     <Routes>
       <Route index element={<ProposalList />} />
       <Route path="new" element={<NewProposal />} />
-      <Route path="bookings" element={<BookingManager />} />
     </Routes>
   );
 }
