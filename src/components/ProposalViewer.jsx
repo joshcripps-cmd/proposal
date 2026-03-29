@@ -456,10 +456,11 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
             </div>
           )}
           <button onClick={onClose} style={{
-            position: "absolute", top: 20, right: 20, width: 40, height: 40,
-            borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.9)",
-            color: NAVY, cursor: "pointer", fontSize: 18, display: "flex",
+            position: "absolute", top: 12, right: 12, width: 44, height: 44,
+            borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.95)",
+            color: NAVY, cursor: "pointer", fontSize: 22, display: "flex",
             alignItems: "center", justifyContent: "center",
+            zIndex: 10, boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
           }}>×</button>
           <div style={{
             position: "absolute", bottom: 0, left: 0, right: 0,
@@ -591,44 +592,59 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
               <div style={{
                 fontSize: 10, color: "#999", fontFamily: "'Inter', sans-serif",
                 fontWeight: 600, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 12,
-              }}>Booking Calendar</div>
+              }}>Confirmed Bookings</div>
               <div style={{
                 border: "1px solid #eee", borderRadius: 10, overflow: "hidden",
               }}>
                 {/* Header */}
                 <div className="rb-booking-header rb-booking-grid" style={{
-                  display: "grid", gridTemplateColumns: "1fr 1fr 100px 1.5fr",
+                  display: "grid", gridTemplateColumns: "1.2fr 1.2fr 90px 1.8fr",
                   padding: "10px 16px", background: NAVY, color: "rgba(255,255,255,0.7)",
                   fontSize: 10, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase",
                   fontFamily: "'Inter', sans-serif",
                 }}>
-                  <div>Start</div>
-                  <div>End</div>
+                  <div>From</div>
+                  <div>To</div>
                   <div>Status</div>
                   <div>Route</div>
                 </div>
                 {/* Rows */}
-                {bookings.map((b, i) => (
-                  <div key={i} className="rb-booking-grid" style={{
-                    display: "grid", gridTemplateColumns: "1fr 1fr 100px 1.5fr",
-                    padding: "10px 16px", borderBottom: i < bookings.length - 1 ? "1px solid #f0f0f0" : "none",
-                    background: i % 2 === 0 ? "#fafaf8" : WHITE,
-                    fontSize: 13, fontFamily: "'Inter', sans-serif", color: NAVY,
-                  }}>
-                    <div>{b.start}</div>
-                    <div>{b.end}</div>
-                    <div>
-                      <span style={{
-                        display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-                        background: (b.status || "").toLowerCase().includes("option") ? "#fef3cd" : "#fecdd3",
-                        color: (b.status || "").toLowerCase().includes("option") ? "#856404" : "#9b1c31",
-                      }}>
-                        {(b.status || "Booked").replace(/^./, c => c.toUpperCase())}
-                      </span>
+                {bookings.map((b, i) => {
+                  const fmtDate = (d) => {
+                    if (!d) return "—";
+                    try {
+                      return new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+                    } catch { return d; }
+                  };
+                  const st = (b.status || "").toLowerCase();
+                  const pillStyle = st.includes("option") ? { bg: "#fef3cd", color: "#856404" }
+                    : st.includes("transit") ? { bg: "#dbeafe", color: "#1e40af" }
+                    : st.includes("shipyard") ? { bg: "#e5e7eb", color: "#374151" }
+                    : st.includes("unavailable") ? { bg: "#e5e7eb", color: "#6b7280" }
+                    : st.includes("boat show") ? { bg: "#ede9fe", color: "#5b21b6" }
+                    : { bg: "#fecdd3", color: "#9b1c31" };
+                  return (
+                    <div key={i} className="rb-booking-grid" style={{
+                      display: "grid", gridTemplateColumns: "1.2fr 1.2fr 90px 1.8fr",
+                      padding: "10px 16px", borderBottom: i < bookings.length - 1 ? "1px solid #f0f0f0" : "none",
+                      background: i % 2 === 0 ? "#fafaf8" : WHITE,
+                      fontSize: 13, fontFamily: "'Inter', sans-serif", color: NAVY,
+                      alignItems: "center",
+                    }}>
+                      <div style={{ fontSize: 12 }}>{fmtDate(b.start)}</div>
+                      <div style={{ fontSize: 12 }}>{fmtDate(b.end)}</div>
+                      <div>
+                        <span style={{
+                          display: "inline-block", padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600,
+                          background: pillStyle.bg, color: pillStyle.color, letterSpacing: 0.3,
+                        }}>
+                          {(b.status || "Booked").replace(/^./, c => c.toUpperCase())}
+                        </span>
+                      </div>
+                      <div style={{ color: "#777", fontSize: 11, lineHeight: 1.4 }}>{b.route || "—"}</div>
                     </div>
-                    <div style={{ color: "#777", fontSize: 12 }}>{b.route || "—"}</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -641,6 +657,19 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
               slug={slug}
               onSubmitEnquiry={onSubmitEnquiry}
             />
+          </div>
+
+          {/* Back button (especially useful on mobile) */}
+          <div style={{ padding: "0 40px 30px", textAlign: "center" }}>
+            <button onClick={onClose} style={{
+              padding: "14px 40px", background: "transparent",
+              border: `1px solid ${NAVY}`, color: NAVY, fontSize: 12,
+              fontFamily: "'Inter', sans-serif", fontWeight: 600,
+              letterSpacing: 2, textTransform: "uppercase",
+              cursor: "pointer", borderRadius: 6, width: "100%", maxWidth: 320,
+            }}>
+              ← Back to Selection
+            </button>
           </div>
         </div>
       </div>
