@@ -1,1 +1,3 @@
-
+/* Roccabella Proposals — Base Styles */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', 'DM Sans', -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
