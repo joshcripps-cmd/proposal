@@ -1455,38 +1455,6 @@ export default function RoccabellaProposal() {
       {/* ── BROKER BIO (client-facing only) ── */}
       {!isBF && <BrokerSection />}
 
-      {/* ── PDF DOWNLOAD ── */}
-      <div style={{
-        textAlign: "center", padding: "40px 24px", background: WHITE,
-        borderTop: `1px solid ${GOLD}22`,
-      }}>
-        <button
-          onClick={generatePDF}
-          disabled={imagesLoading}
-          style={{
-            padding: "16px 48px",
-            background: imagesLoading ? "#ccc" : `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_LIGHT} 100%)`,
-            color: WHITE,
-            border: "none",
-            borderRadius: 8,
-            fontSize: 13,
-            fontFamily: "'Inter', sans-serif",
-            fontWeight: 600,
-            letterSpacing: 2,
-            textTransform: "uppercase",
-            cursor: imagesLoading ? "not-allowed" : "pointer",
-          }}
-        >
-          {imagesLoading ? "LOADING IMAGES..." : "⬇  DOWNLOAD PDF PROPOSAL"}
-        </button>
-        <div style={{
-          marginTop: 12, fontSize: 11, color: "#999",
-          fontFamily: "'Inter', sans-serif", fontWeight: 300,
-        }}>
-          Landscape A4 · {yachts.length + 5} pages · Branded
-        </div>
-      </div>
-
       {/* ── FOOTER ── */}
       <footer style={{
         background: `linear-gradient(170deg, ${NAVY} 0%, ${NAVY_MID} 100%)`, padding: "48px 24px", textAlign: "center",
