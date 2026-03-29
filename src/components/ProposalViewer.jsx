@@ -406,11 +406,15 @@ function YachtCard({ yacht, discount, isFav, onToggleFav, onSelect, imageUrl }) 
 }
 
 // ── Yacht Detail Modal ──
-function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFriendly, imageUrl, eBrochureUrl, bookings }) {
+function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFriendly, imageUrl, eBrochureUrl, bookings, slug, onSubmitEnquiry }) {
   const hasDiscount = discount > 0 && typeof yacht.price_high === "number";
   const hasImage = !!imageUrl;
   const brochureHref = yacht.brochure_url || eBrochureUrl || null;
   const hasBookings = bookings && bookings.length > 0;
+  // Format bookings for AvailabilityCalendar
+  const calendarBookings = hasBookings ? bookings.map(b => ({
+    start_date: b.start, end_date: b.end, status: b.status, route: b.route
+  })) : [];
 
   return (
     <div style={{
@@ -628,6 +632,16 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
               </div>
             </div>
           )}
+
+          {/* Interactive Availability Calendar */}
+          <div style={{ padding: "0 40px 30px" }}>
+            <AvailabilityCalendar
+              yacht={yacht}
+              bookings={calendarBookings}
+              slug={slug}
+              onSubmitEnquiry={onSubmitEnquiry}
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -1224,6 +1238,8 @@ export default function RoccabellaProposal() {
           imageUrl={getYachtImage(selectedYacht)}
           eBrochureUrl={yachtImages[`${selectedYacht.name}_ebrochure`] || null}
           bookings={yachtBookings[selectedYacht.name] || null}
+          slug={slug}
+          onSubmitEnquiry={submitCharterEnquiry}
         />
       )}
 
@@ -1315,14 +1331,6 @@ export default function RoccabellaProposal() {
                 onToggleFav={toggleFav}
                 onSelect={setSelectedYacht}
                 imageUrl={getYachtImage(yacht)}
-              />
-              <AvailabilityCalendar
-                yacht={yacht}
-                bookings={(yachtBookings[yacht.name] || []).map(b => ({
-                  start_date: b.start, end_date: b.end, status: b.status, route: b.route
-                }))}
-                slug={slug}
-                onSubmitEnquiry={submitCharterEnquiry}
               />
             </div>
           ))}
