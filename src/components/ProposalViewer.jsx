@@ -513,7 +513,7 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
 
           {/* Key features */}
           {yacht.features && (
-            <div style={{ marginBottom: 30 }}>
+            <div className="rb-detail-features" style={{ marginBottom: 30 }}>
               <div style={{
                 fontSize: 10, color: RED_ACCENT, fontFamily: "'Inter', sans-serif",
                 fontWeight: 600, letterSpacing: 2, textTransform: "uppercase", marginBottom: 12,
@@ -533,7 +533,7 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
           <div style={{ height: 2, background: RED_ACCENT, width: 50, marginBottom: 24 }} />
 
           {/* Price section */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 20 }}>
+          <div className="rb-detail-price" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 20, marginBottom: 24 }}>
             <div>
               <div style={{
                 fontSize: 10, color: "#999", fontFamily: "'Inter', sans-serif",
@@ -588,7 +588,7 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
 
           {/* Booking Availability */}
           {hasBookings && (
-            <div style={{ padding: "0 40px 30px" }}>
+            <div className="rb-booking-section" style={{ padding: "0 40px 30px" }}>
               <div style={{
                 fontSize: 10, color: "#999", fontFamily: "'Inter', sans-serif",
                 fontWeight: 600, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 12,
@@ -650,7 +650,7 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
           )}
 
           {/* Interactive Availability Calendar */}
-          <div style={{ padding: "0 40px 30px" }}>
+          <div className="rb-calendar-section" style={{ padding: "0 40px 30px" }}>
             <AvailabilityCalendar
               yacht={yacht}
               bookings={calendarBookings}
@@ -659,14 +659,14 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
             />
           </div>
 
-          {/* Back button (especially useful on mobile) */}
-          <div style={{ padding: "0 40px 30px", textAlign: "center" }}>
+          {/* Back button */}
+          <div className="rb-back-btn" style={{ padding: "0 40px 30px", textAlign: "center" }}>
             <button onClick={onClose} style={{
-              padding: "14px 40px", background: "transparent",
-              border: `1px solid ${NAVY}`, color: NAVY, fontSize: 12,
-              fontFamily: "'Inter', sans-serif", fontWeight: 600,
-              letterSpacing: 2, textTransform: "uppercase",
-              cursor: "pointer", borderRadius: 6, width: "100%", maxWidth: 320,
+              padding: "12px 32px", background: "transparent",
+              border: `1px solid #ccc`, color: "#777", fontSize: 11,
+              fontFamily: "'Inter', sans-serif", fontWeight: 500,
+              letterSpacing: 1.5, textTransform: "uppercase",
+              cursor: "pointer", borderRadius: 6,
             }}>
               ← Back to Selection
             </button>
@@ -1258,27 +1258,35 @@ export default function RoccabellaProposal() {
       {/* Responsive mobile styles */}
       <style>{`
         @media (max-width: 768px) {
-          .rb-detail-image { height: 220px !important; }
-          .rb-detail-modal { padding: 16px 10px !important; }
-          .rb-detail-inner { border-radius: 12px !important; }
-          .rb-detail-specs { grid-template-columns: repeat(2, 1fr) !important; gap: 12px !important; }
-          .rb-detail-actions { flex-direction: column !important; }
-          .rb-detail-actions > * { width: 100% !important; text-align: center !important; justify-content: center !important; }
-          .rb-booking-grid { grid-template-columns: 1fr 1fr !important; font-size: 11px !important; }
-          .rb-booking-grid > div:nth-child(4n+3),
-          .rb-booking-grid > div:nth-child(4n+4) { display: none !important; }
-          .rb-booking-header > div:nth-child(3),
+          .rb-detail-image { height: 240px !important; }
+          .rb-detail-modal { padding: 0 !important; }
+          .rb-detail-inner { border-radius: 0 !important; min-height: 100vh !important; }
+          .rb-detail-specs { grid-template-columns: repeat(2, 1fr) !important; gap: 14px !important; padding: 20px 20px 0 !important; }
+          .rb-detail-actions { flex-direction: column !important; padding: 0 20px !important; }
+          .rb-detail-actions > * { width: 100% !important; text-align: center !important; justify-content: center !important; box-sizing: border-box !important; }
+          .rb-detail-features { padding: 0 20px 20px !important; }
+          .rb-detail-price { padding: 0 20px 20px !important; }
+          .rb-booking-section { padding: 0 20px 20px !important; }
+          .rb-booking-grid { grid-template-columns: 1fr 1fr 80px !important; font-size: 11px !important; padding: 8px 10px !important; }
+          .rb-booking-grid > div:nth-child(4) { display: none !important; }
           .rb-booking-header > div:nth-child(4) { display: none !important; }
+          .rb-calendar-section { padding: 0 20px 20px !important; }
+          .rb-back-btn { padding: 0 20px 30px !important; }
           .rb-fleet-grid { grid-template-columns: 1fr !important; }
           .rb-broker-section { grid-template-columns: 1fr !important; }
           .rb-broker-left { padding: 40px 24px !important; }
           .rb-broker-right { padding: 30px 24px !important; }
           .rb-enquiry-grid { grid-template-columns: 1fr !important; }
+          .rb-yacht-name-overlay { font-size: 20px !important; letter-spacing: 1.5px !important; }
+          .rb-detail-yacht-name { font-size: 26px !important; }
         }
         @media (max-width: 480px) {
-          .rb-detail-image { height: 180px !important; }
+          .rb-detail-image { height: 200px !important; }
           .rb-header-title { font-size: 22px !important; }
-          .rb-fleet-grid { grid-template-columns: 1fr !important; gap: 16px !important; }
+          .rb-fleet-grid { gap: 16px !important; }
+          .rb-booking-grid { grid-template-columns: 1fr 1fr !important; }
+          .rb-booking-grid > div:nth-child(4n+3) { display: none !important; }
+          .rb-booking-header > div:nth-child(3) { display: none !important; }
         }
       `}</style>
       {/* Detail modal */}
