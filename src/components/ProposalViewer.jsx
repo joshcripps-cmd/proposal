@@ -417,19 +417,19 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
   })) : [];
 
   return (
-    <div style={{
+    <div className="rb-detail-modal" style={{
       position: "fixed", inset: 0, zIndex: 1000,
       background: "rgba(15,29,47,0.85)", backdropFilter: "blur(10px)",
       display: "flex", justifyContent: "center", alignItems: "flex-start",
       overflowY: "auto", padding: "40px 20px",
     }} onClick={onClose}>
-      <div style={{
+      <div className="rb-detail-inner" style={{
         background: WHITE, maxWidth: 900, width: "100%",
         boxShadow: "0 40px 100px rgba(0,0,0,0.3)",
         borderRadius: 18, overflow: "hidden",
       }} onClick={(e) => e.stopPropagation()}>
         {/* Header image */}
-        <div style={{
+        <div className="rb-detail-image" style={{
           height: 380,
           background: hasImage
             ? `url(${imageUrl}) center/cover`
@@ -482,7 +482,7 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
 
         {/* Specs grid */}
         <div style={{ padding: "30px 40px" }}>
-          <div style={{
+          <div className="rb-detail-specs" style={{
             display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
             gap: 24, marginBottom: 30,
           }}>
@@ -558,7 +558,7 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
               )}
             </div>
 
-            <div style={{ display: "flex", gap: 12 }}>
+            <div className="rb-detail-actions" style={{ display: "flex", gap: 12 }}>
               <button
                 onClick={() => onToggleFav(yacht.id)}
                 style={{
@@ -596,7 +596,7 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
                 border: "1px solid #eee", borderRadius: 10, overflow: "hidden",
               }}>
                 {/* Header */}
-                <div style={{
+                <div className="rb-booking-header rb-booking-grid" style={{
                   display: "grid", gridTemplateColumns: "1fr 1fr 100px 1.5fr",
                   padding: "10px 16px", background: NAVY, color: "rgba(255,255,255,0.7)",
                   fontSize: 10, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase",
@@ -609,7 +609,7 @@ function YachtDetail({ yacht, discount, isFav, onToggleFav, onClose, brokerFrien
                 </div>
                 {/* Rows */}
                 {bookings.map((b, i) => (
-                  <div key={i} style={{
+                  <div key={i} className="rb-booking-grid" style={{
                     display: "grid", gridTemplateColumns: "1fr 1fr 100px 1.5fr",
                     padding: "10px 16px", borderBottom: i < bookings.length - 1 ? "1px solid #f0f0f0" : "none",
                     background: i % 2 === 0 ? "#fafaf8" : WHITE,
@@ -706,12 +706,12 @@ function ComparisonTable({ yachts, discount, favourites }) {
 // ── Broker Section ──
 function BrokerSection() {
   return (
-    <div style={{
+    <div className="rb-broker-section" style={{
       display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0,
       minHeight: 400,
     }}>
       {/* Photo placeholder */}
-      <div style={{
+      <div className="rb-broker-left" style={{
         background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_LIGHT} 100%)`,
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
         padding: 40,
@@ -732,7 +732,7 @@ function BrokerSection() {
       </div>
 
       {/* Bio */}
-      <div style={{
+      <div className="rb-broker-right" style={{
         background: WHITE, padding: 50, display: "flex", flexDirection: "column", justifyContent: "center",
       }}>
         <div style={{
@@ -1226,6 +1226,32 @@ export default function RoccabellaProposal() {
 
   return (
     <div style={{ background: CREAM, minHeight: "100vh", fontFamily: "'Inter', sans-serif" }}>
+      {/* Responsive mobile styles */}
+      <style>{`
+        @media (max-width: 768px) {
+          .rb-detail-image { height: 220px !important; }
+          .rb-detail-modal { padding: 16px 10px !important; }
+          .rb-detail-inner { border-radius: 12px !important; }
+          .rb-detail-specs { grid-template-columns: repeat(2, 1fr) !important; gap: 12px !important; }
+          .rb-detail-actions { flex-direction: column !important; }
+          .rb-detail-actions > * { width: 100% !important; text-align: center !important; justify-content: center !important; }
+          .rb-booking-grid { grid-template-columns: 1fr 1fr !important; font-size: 11px !important; }
+          .rb-booking-grid > div:nth-child(4n+3),
+          .rb-booking-grid > div:nth-child(4n+4) { display: none !important; }
+          .rb-booking-header > div:nth-child(3),
+          .rb-booking-header > div:nth-child(4) { display: none !important; }
+          .rb-fleet-grid { grid-template-columns: 1fr !important; }
+          .rb-broker-section { grid-template-columns: 1fr !important; }
+          .rb-broker-left { padding: 40px 24px !important; }
+          .rb-broker-right { padding: 30px 24px !important; }
+          .rb-enquiry-grid { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 480px) {
+          .rb-detail-image { height: 180px !important; }
+          .rb-header-title { font-size: 22px !important; }
+          .rb-fleet-grid { grid-template-columns: 1fr !important; gap: 16px !important; }
+        }
+      `}</style>
       {/* Detail modal */}
       {selectedYacht && (
         <YachtDetail
@@ -1322,6 +1348,12 @@ export default function RoccabellaProposal() {
           <div style={{
             width: 48, height: 1, background: `linear-gradient(90deg, transparent, ${GOLD}, transparent)`, margin: "16px auto 0",
           }} />
+        </div>
+        <div className="rb-fleet-grid" style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+          gap: 24,
+        }}>
         {yachts.map((yacht) => (
             <div key={yacht.id}>
               <YachtCard
