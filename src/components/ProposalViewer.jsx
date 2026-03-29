@@ -922,34 +922,68 @@ export default function RoccabellaProposal() {
     const CREAM_PDF = "#f7f5f0";
     const RED_PDF = "#c43a2b";
 
-    const toBase64 = (url) => new Promise((resolve) => {
+    // Proxy-based image fetching — bypasses CORS
+    const fetchImageViaProxy = async (url) => {
+      if (!url) return null;
+      if (url.startsWith("data:")) return url;
+      try {
+        const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
+        if (!res.ok) return null;
+        const json = await res.json();
+        return json.dataUri || null;
+      } catch { return null; }
+    };
+
+    // Client-side fallback (for same-origin or data URIs)
+    const toBase64Fallback = (url) => new Promise((resolve) => {
+      if (!url) { resolve(null); return; }
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.onload = () => {
-        const c = document.createElement("canvas");
-        c.width = img.width; c.height = img.height;
-        c.getContext("2d").drawImage(img, 0, 0);
-        try { resolve(c.toDataURL("image/jpeg", 0.85)); } catch { resolve(null); }
+        try {
+          const c = document.createElement("canvas");
+          c.width = img.width; c.height = img.height;
+          c.getContext("2d").drawImage(img, 0, 0);
+          resolve(c.toDataURL("image/jpeg", 0.85));
+        } catch { resolve(null); }
       };
       img.onerror = () => resolve(null);
       img.src = url;
     });
 
-    // Pre-fetch all yacht images as base64
+    // Pre-fetch all yacht images via proxy, with fallback
     const imgCache = {};
     for (const y of yachts) {
       const url = getYachtImage(y);
-      if (url && !url.startsWith("data:")) {
-        imgCache[y.name] = await toBase64(url);
-      } else if (url) {
-        imgCache[y.name] = url;
-      }
+      if (!url) continue;
+      if (url.startsWith("data:")) { imgCache[y.name] = url; continue; }
+      // Try proxy first
+      let b64 = await fetchImageViaProxy(url);
+      // Fallback to client-side canvas
+      if (!b64) b64 = await toBase64Fallback(url);
+      if (b64) imgCache[y.name] = b64;
     }
 
     let logoWhiteB64 = LOGO_WHITE;
     let logoNavyB64 = LOGO_NAVY;
     let brokerPhotoB64 = JOSH_PHOTO;
     const isBF = proposal.broker_friendly;
+
+    // ── Helper: draw branded placeholder when image is missing ──
+    const drawPlaceholder = (x, y, w, h, name) => {
+      doc.setFillColor(15, 29, 47);
+      doc.rect(x, y, w, h, "F");
+      // Gold accent line
+      doc.setDrawColor(201, 169, 110);
+      doc.setLineWidth(1.5);
+      doc.line(x + 20, y + h / 2 - 12, x + 60, y + h / 2 - 12);
+      // Yacht name in gold
+      doc.setTextColor(201, 169, 110);
+      const fontSize = w > 200 ? 16 : 10;
+      doc.setFontSize(fontSize);
+      doc.setFont("helvetica", "normal");
+      doc.text(name || "", x + 20, y + h / 2 + 6);
+    };
 
     // PAGE 1 — Cover
     doc.setFillColor(CREAM_PDF);
@@ -1032,8 +1066,8 @@ export default function RoccabellaProposal() {
       const x = margin + col * (cardW + 15);
       const yPos = startY + row * 210;
       const b64 = imgCache[y.name];
-      if (b64) { try { doc.addImage(b64, "JPEG", x, yPos, thumbW, thumbH); } catch {} }
-      else { doc.setFillColor(NAVY_PDF); doc.rect(x, yPos, thumbW, thumbH, "F"); doc.setTextColor(201,169,110); doc.setFontSize(9); doc.text(y.name, x+10, yPos+thumbH/2); }
+      if (b64) { try { doc.addImage(b64, "JPEG", x, yPos, thumbW, thumbH); } catch { drawPlaceholder(x, yPos, thumbW, thumbH, y.name); } }
+      else { drawPlaceholder(x, yPos, thumbW, thumbH, y.name); }
       doc.setTextColor(NAVY_PDF); doc.setFontSize(14); doc.setFont("helvetica","bold"); doc.text(y.name, x, yPos+thumbH+20);
       doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(100,100,100);
       doc.text(`${y.length_m}m  ·  ${y.builder}  ·  ${y.year_built}${y.year_refit ? " / Refit "+y.year_refit : ""}`, x, yPos+thumbH+35);
@@ -1049,8 +1083,8 @@ export default function RoccabellaProposal() {
       doc.setFillColor(CREAM_PDF); doc.rect(0,0,W,H,"F");
       const heroW=W/2-30,heroH=H-100,heroX=W/2+10,heroY=50;
       const b64=imgCache[y.name];
-      if(b64){try{doc.addImage(b64,"JPEG",heroX,heroY,heroW,heroH);}catch{}}
-      else{doc.setFillColor(NAVY_PDF);doc.rect(heroX,heroY,heroW,heroH,"F");doc.setTextColor(201,169,110);doc.setFontSize(14);doc.text(y.name,heroX+20,heroY+heroH/2);}
+      if(b64){try{doc.addImage(b64,"JPEG",heroX,heroY,heroW,heroH);}catch{drawPlaceholder(heroX,heroY,heroW,heroH,y.name);}}
+      else{drawPlaceholder(heroX,heroY,heroW,heroH,y.name);}
       const lx=margin;let ly=55;
       doc.setTextColor(NAVY_PDF);doc.setFontSize(22);doc.setFont("helvetica","bold");doc.text(y.name,lx,ly);ly+=20;
       doc.setDrawColor(GOLD_PDF);doc.setLineWidth(1.5);doc.line(lx,ly,lx+50,ly);ly+=25;
