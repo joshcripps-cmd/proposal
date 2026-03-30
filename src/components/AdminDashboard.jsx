@@ -255,23 +255,21 @@ async function extractTextFromPDF(file) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
 
-    // Group text items by Y position (rounded to nearest 2px) to reconstruct lines.
-    // pdfjs shatters words into single chars; grouping by Y then sorting by X reassembles them.
-    const rowMap = new Map();
+    // This PDF shatters every word into individual character fragments.
+    // Empty string items (str === '') act as line-break markers between logical rows.
+    // Concatenate all non-empty fragments; flush as a line on each empty item.
+    let buf = '';
     for (const item of content.items) {
-      if (!item.str) continue;
-      const y = Math.round(item.transform[5] / 2) * 2;
-      const x = item.transform[4];
-      if (!rowMap.has(y)) rowMap.set(y, []);
-      rowMap.get(y).push({ x, str: item.str });
+      if (item.str === '' || item.str === undefined) {
+        const line = buf.trim();
+        if (line) allLines.push(line);
+        buf = '';
+      } else {
+        buf += item.str;
+      }
     }
-
-    // Sort top-to-bottom (descending Y in PDF coords)
-    const sortedYs = Array.from(rowMap.keys()).sort((a, b) => b - a);
-    for (const y of sortedYs) {
-      const lineText = rowMap.get(y).sort((a, b) => a.x - b.x).map(i => i.str).join('').trim();
-      if (lineText) allLines.push(lineText);
-    }
+    const last = buf.trim();
+    if (last) allLines.push(last);
   }
 
   return allLines.join('\n');
