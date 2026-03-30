@@ -243,6 +243,40 @@ function parseYachtfolioXLSX(file) {
   });
 }
 
+async function extractTextFromPDF(file) {
+  const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const allLines = [];
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+
+    // Group text items by Y position (rounded to nearest 2px) to reconstruct lines.
+    // pdfjs shatters words into single chars; grouping by Y then sorting by X reassembles them.
+    const rowMap = new Map();
+    for (const item of content.items) {
+      if (!item.str) continue;
+      const y = Math.round(item.transform[5] / 2) * 2;
+      const x = item.transform[4];
+      if (!rowMap.has(y)) rowMap.set(y, []);
+      rowMap.get(y).push({ x, str: item.str });
+    }
+
+    // Sort top-to-bottom (descending Y in PDF coords)
+    const sortedYs = Array.from(rowMap.keys()).sort((a, b) => b - a);
+    for (const y of sortedYs) {
+      const lineText = rowMap.get(y).sort((a, b) => a.x - b.x).map(i => i.str).join('').trim();
+      if (lineText) allLines.push(lineText);
+    }
+  }
+
+  return allLines.join('\n');
+}
+
 async function saveBookingsForProposal(parsedYachts, proposalId, dbYachts) {
   const results = { saved: 0, matched: 0, errors: [] };
 
