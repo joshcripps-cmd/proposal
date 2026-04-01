@@ -1,13 +1,21 @@
 // BookingPDFParser.js
+
 // Parses a Yachtfolio booking PDF (text extracted via pdfjs) into structured data
+
 // Format: one PDF, multiple yachts, each with Start / End / Status columns
 
 const DATE_RE = /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}$/;
+
 const MONTHS = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-const LAST_UPDATE_RE = /^Last update:\s*(?:\d{1,2}\s+\w{3}\s+\d{4}\s+\d{2}:\d{2}:\d{2}\s*)?(.*)$/i;
+
+const LAST_UPDATE_RE = /^Last update:\s*(?:\d{1,2}\s+\w{3}\s+\d{4}\s+\d{2}:\d{2}:\d{2}\s*)?(.*)/i;
+
 const DATETIME_ONLY_RE = /^\d{1,2}\s+\w{3}\s+\d{4}\s+\d{2}:\d{2}:\d{2}$/;
+
 const SKIP_SET = new Set(['Start','End','Status','Booking list','No records to display']);
+
 const STATUS_RE = /^(Booked|Option|Transit|Shipyard|Boat Show|Unavailable|Flexible use)/i;
+
 const FULL_DATE_G = /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/g;
 
 function parseDate(s) {
@@ -25,20 +33,17 @@ function toISO(d) {
 }
 
 function preProcess(rawText) {
-  // Fix merged lines produced by pdfjs Y-position grouping:
-  // 1. "Disco VolanteStart End Status" → ["Disco Volante", "Start", "End", "Status"]
-  // 2. "01 Nov 2025 09 May 2026 Booked - ..." → ["01 Nov 2025", "09 May 2026 Booked - ..."]
   const rawLines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
   const lines = [];
 
   for (const l of rawLines) {
-    // Split trailing "Start End Status"
     if (l.endsWith('Start End Status')) {
       const base = l.slice(0, l.length - 'Start End Status'.length).trim();
       if (base) lines.push(base);
       lines.push('Start'); lines.push('End'); lines.push('Status');
       continue;
     }
+
     if (l.endsWith('Start End')) {
       const base = l.slice(0, l.length - 'Start End'.length).trim();
       if (base) lines.push(base);
@@ -46,7 +51,6 @@ function preProcess(rawText) {
       continue;
     }
 
-    // Split lines with two dates jammed together
     const dateMatches = [...l.matchAll(FULL_DATE_G)];
     if (dateMatches.length >= 2) {
       const secondStart = dateMatches[1].index;
@@ -59,11 +63,13 @@ function preProcess(rawText) {
 
     lines.push(l);
   }
+
   return lines;
 }
 
 export function parseBookingPDF(rawText) {
   const lines = preProcess(rawText);
+
   const yachtNames = [];
   const yachtSet = new Set();
 
@@ -121,10 +127,15 @@ export function parseBookingPDF(rawText) {
     if (/^https?:\/\//.test(line)) continue;
     if (/^\d+\/\d+$/.test(line)) continue;
     if (line === 'YACHTFOLIO - Booking list') continue;
-    if (line === 'No records to display') continue;
     if (DATETIME_ONLY_RE.test(line)) continue;
     if (/^\d{2}:\d{2}:\d{2}$/.test(line)) continue;
     if (yachtSet.has(line)) continue;
+
+    // FIX: "No records to display" means this yacht has no bookings — still advance the index
+    if (line === 'No records to display') {
+      yachtIndex++;
+      continue;
+    }
 
     // "Start End Status" header = advance to next yacht
     if (line === 'Start' && lines[i+1] === 'End' && lines[i+2] === 'Status') {
@@ -132,9 +143,11 @@ export function parseBookingPDF(rawText) {
       i += 2;
       continue;
     }
+
     if (line === 'Start' || line === 'End' || line === 'Status') continue;
 
     if (yachtIndex < 0 || yachtIndex >= yachtNames.length) continue;
+
     const currentYacht = yachtMap[yachtNames[yachtIndex]];
 
     if (DATE_RE.test(line)) {
@@ -142,9 +155,9 @@ export function parseBookingPDF(rawText) {
       if (nextLine && DATE_RE.test(nextLine)) {
         const startDate = parseDate(line);
         const endDate = parseDate(nextLine);
-
         const statusParts = [];
         let k = i + 2;
+
         while (k < lines.length) {
           const l = lines[k];
           if (DATE_RE.test(l)) break;
@@ -165,6 +178,7 @@ export function parseBookingPDF(rawText) {
         const status = typeMatch
           ? typeMatch[1].charAt(0).toUpperCase() + typeMatch[1].slice(1).toLowerCase()
           : 'Booked';
+
         const route = statusRaw
           .replace(/^(Booked|Option|Transit|Shipyard|Boat Show|Unavailable|Flexible use)\s*[-–]?\s*/i, '')
           .replace(/\s+/g, ' ')
@@ -178,6 +192,7 @@ export function parseBookingPDF(rawText) {
             route,
           });
         }
+
         i = k - 1;
       }
     }
@@ -197,6 +212,7 @@ export async function saveBookingsToSupabase(parsedYachts, proposalId, supabaseU
       headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
     }
   );
+
   if (!delRes.ok) {
     results.errors.push(`Delete failed: ${delRes.status}`);
     return results;
@@ -207,11 +223,13 @@ export async function saveBookingsToSupabase(parsedYachts, proposalId, supabaseU
     `${supabaseUrl}/rest/v1/yachts?select=id,name&name=in.(${names.map(n => `"${n}"`).join(',')})`,
     { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
   );
+
   const yachtRows = lookupRes.ok ? await lookupRes.json() : [];
   const yachtMap = Object.fromEntries(yachtRows.map(y => [y.name.toUpperCase(), y.id]));
 
   for (const yacht of parsedYachts) {
     const yachtId = yachtMap[yacht.name.toUpperCase()] || null;
+
     const rows = yacht.bookings.map(b => ({
       proposal_id: proposalId,
       yacht_id: yachtId,
@@ -221,7 +239,9 @@ export async function saveBookingsToSupabase(parsedYachts, proposalId, supabaseU
       status: b.status,
       route: b.route,
     }));
+
     if (!rows.length) continue;
+
     const insRes = await fetch(`${supabaseUrl}/rest/v1/yacht_bookings`, {
       method: 'POST',
       headers: {
@@ -230,6 +250,7 @@ export async function saveBookingsToSupabase(parsedYachts, proposalId, supabaseU
       },
       body: JSON.stringify(rows),
     });
+
     if (insRes.ok) results.saved += rows.length;
     else results.errors.push(`Insert failed for ${yacht.name}: ${insRes.status}`);
   }
