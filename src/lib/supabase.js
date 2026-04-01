@@ -49,7 +49,7 @@ export async function sendProposal(id) { return updateProposal(id, { status: 'se
 
 // ── YACHTS ──
 export async function getYachtsByIds(ids) {
-  const { data, error } = await supabase.from('yachts').select('*').in('id', ids).eq('active', true);
+  const { data, error } = await supabase.from('yachts').select('*').in('id', ids).eq('active', true).order('length_m', { ascending: false });
   if (error) throw error;
   return data;
 }
