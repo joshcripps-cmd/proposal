@@ -298,7 +298,16 @@ async function extractTextFromPDF(file) {
     const sortedYs = [...rowMap.keys()].sort((a, b) => b - a);
     for (const y of sortedYs) {
       const items = rowMap.get(y).sort((a, b) => a.x - b.x);
-      const line = items.map(it => it.str).join('').trim();
+      // Join items, inserting a space when there's a gap between them
+      let line = items[0].str;
+      for (let j = 1; j < items.length; j++) {
+        const prev = items[j - 1];
+        const curr = items[j];
+        const gap = curr.x - (prev.x + (prev.str.length * 4)); // rough char width ~4px
+        if (gap > 2) line += ' ';
+        line += curr.str;
+      }
+      line = line.trim();
       if (line) allLines.push(line);
     }
   }
