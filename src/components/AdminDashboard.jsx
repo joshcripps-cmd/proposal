@@ -284,28 +284,39 @@ async function extractTextFromPDF(file) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
 
-    // Group text items by Y position (rounded to nearest 2px to handle sub-pixel variance).
-    // This is more reliable than relying on empty-string markers which vary by PDF.
+    // Use pdfjs item.width and x-position to reconstruct lines properly.
+    // Each item has: str, transform (x=transform[4], y=transform[5]), width, height
+    // Items on the same line have the same Y. We add a space only when the gap
+    // between end of previous item and start of next exceeds 15% of the font height.
     const rowMap = new Map();
     for (const item of content.items) {
-      if (!item.str || item.str.trim() === '') continue;
-      const y = Math.round(item.transform[5] / 2) * 2;
+      if (!item.str) continue;
+      const y = Math.round(item.transform[5]);
       if (!rowMap.has(y)) rowMap.set(y, []);
-      rowMap.get(y).push({ x: item.transform[4], str: item.str });
+      rowMap.get(y).push({
+        x: item.transform[4],
+        str: item.str,
+        width: item.width || 0,
+        height: item.height || item.transform[0] || 10,
+      });
     }
 
-    // Sort rows top-to-bottom (PDF Y coords are bottom-up, so descending = top-to-bottom)
     const sortedYs = [...rowMap.keys()].sort((a, b) => b - a);
     for (const y of sortedYs) {
       const items = rowMap.get(y).sort((a, b) => a.x - b.x);
-      // Join items, inserting a space when there's a gap between them
-      let line = items[0].str;
-      for (let j = 1; j < items.length; j++) {
-        const prev = items[j - 1];
-        const curr = items[j];
-        const gap = curr.x - (prev.x + (prev.str.length * 4)); // rough char width ~4px
-        if (gap > 2) line += ' ';
-        line += curr.str;
+      let line = '';
+      for (let j = 0; j < items.length; j++) {
+        if (j === 0) {
+          line += items[j].str;
+        } else {
+          const prev = items[j - 1];
+          const curr = items[j];
+          const expectedEnd = prev.x + prev.width;
+          const gap = curr.x - expectedEnd;
+          const spaceThreshold = (prev.height || 10) * 0.15;
+          if (gap > spaceThreshold) line += ' ';
+          line += curr.str;
+        }
       }
       line = line.trim();
       if (line) allLines.push(line);
