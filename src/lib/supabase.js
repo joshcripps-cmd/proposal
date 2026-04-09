@@ -181,4 +181,13 @@ export async function submitCharterEnquiry(enquiry) {
 export async function signIn(email, password) { const { data, error } = await supabase.auth.signInWithPassword({ email, password }); if (error) throw error; return data; }
 export async function signOut() { await supabase.auth.signOut(); }
 export async function getSession() { const { data } = await supabase.auth.getSession(); return data.session; }
-export function onAuthChange(cb) { return supabase.auth.onAuthStateChange(cb); }
+export function onAuthChange(cb) { return supabase.auth.onAuthStateChange(cb); }export async function uploadPartnerLogo(file) {
+  const ext = file.name.split('.').pop();
+  const path = `partner-logos/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage
+    .from('partner-logos')
+    .upload(path, file, { upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from('partner-logos').getPublicUrl(path);
+  return data.publicUrl;
+}
