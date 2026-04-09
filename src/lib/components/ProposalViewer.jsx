@@ -87,9 +87,7 @@ function LoadingScreen({ onComplete, brokerFriendly, clientName }) {
     }}>
       {/* Logo */}
       {!brokerFriendly ? (
-        <img src={LOGO_WHITE} alt="Roccabella Yachts" style={{
-          height: 50, marginBottom: 40, opacity: progress > 5 ? 1 : 0,
-          transition: "opacity 1s ease", display: "block", margin: "0 auto 40px",
+        <img src={partnerLogo || LOGO_WHITE} alt={partnerLogo ? "Partner" : "Roccabella Yachts"} style={{         height: 50, marginBottom: 40,,
         }} />
       ) : (
         <div style={{
@@ -135,7 +133,7 @@ function LoadingScreen({ onComplete, brokerFriendly, clientName }) {
 }
 
 // ── Entry Gate ──
-function EntryGate({ onEnter, brokerFriendly, clientName }) {
+function EntryGate({ onEnter, brokerFriendly, clientName, partnerLogo }) {
   const [name, setName] = useState("");
   const [hovering, setHovering] = useState(false);
 
@@ -146,8 +144,7 @@ function EntryGate({ onEnter, brokerFriendly, clientName }) {
       fontFamily: "'Cormorant Garamond', serif",
     }}>
       {!brokerFriendly && (
-        <img src={LOGO_WHITE} alt="Roccabella Yachts" style={{
-          height: 46, marginBottom: 50, display: "block", margin: "0 auto 50px",
+        <img src={partnerLogo || LOGO_WHITE} alt={partnerLogo ? "Partner" : "Roccabella Yachts"} style={{         height: 46, marginBottom: 50,,
         }} />
       )}
       {brokerFriendly && (
@@ -862,6 +859,13 @@ export default function RoccabellaProposal() {
     let logoNavyB64 = LOGO_NAVY;
     let brokerPhotoB64 = JOSH_PHOTO;
     const isBF = proposal.broker_friendly;
+    if (proposal.partner_logo_url) {
+      const partnerB64 = await toBase64(proposal.partner_logo_url);
+      if (partnerB64) {
+        logoWhiteB64 = partnerB64;
+        logoNavyB64 = partnerB64;
+      }
+    }
 
     // PAGE 1 — Cover
     doc.setFillColor(CREAM_PDF);
@@ -1077,8 +1081,8 @@ export default function RoccabellaProposal() {
     </div>
   );
 
-  if (stage === "gate") return <EntryGate onEnter={handleEnter} brokerFriendly={proposal.broker_friendly} clientName={proposal.client_name} />;
-  if (stage === "loading") return <LoadingScreen onComplete={() => setStage("proposal")} brokerFriendly={proposal.broker_friendly} clientName={proposal.client_name} />;
+  if (stage === "gate") return <EntryGate onEnter={handleEnter} brokerFriendly={proposal.broker_friendly} clientName={proposal.client_name} partnerLogo={proposal.partner_logo_url} />;
+  if (stage === "loading") return <LoadingScreen onComplete={() => setStage("proposal")} brokerFriendly={proposal.broker_friendly} clientName={proposal.client_name} partnerLogo={proposal.partner_logo_url} />;
 
   const isBF = proposal.broker_friendly;
 
@@ -1102,8 +1106,7 @@ export default function RoccabellaProposal() {
         background: `linear-gradient(170deg, ${NAVY} 0%, ${NAVY_MID} 100%)`, padding: "48px 0 56px", textAlign: "center",
       }}>
         {!isBF && (
-          <img src={LOGO_WHITE} alt="Roccabella Yachts" style={{
-            height: 44, marginBottom: 28, display: "block", margin: "0 auto 28px",
+          <img src={proposal.partner_logo_url || LOGO_WHITE} alt={proposal.partner_logo_url ? "Partner" : "Roccabella Yachts"} style={{           height: 44, marginBottom: 28,
             opacity: 0.95,
           }} />
         )}
@@ -1321,8 +1324,7 @@ export default function RoccabellaProposal() {
         background: `linear-gradient(170deg, ${NAVY} 0%, ${NAVY_MID} 100%)`, padding: "48px 24px", textAlign: "center",
       }}>
         {!isBF && (
-          <img src={LOGO_WHITE} alt="Roccabella Yachts" style={{
-            height: 36, marginBottom: 20, display: "block", margin: "0 auto 20px",
+          <img src={proposal.partner_logo_url || LOGO_WHITE} alt={proposal.partner_logo_url ? "Partner" : "Roccabella Yachts"} style={{           height: 36, marginBottom: 20,
             opacity: 0.85,
           }} />
         )}
