@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import {
   getAllProposals, createProposal, updateProposal, sendProposal,
-  getAllYachts, upsertYachts, getProposalAnalytics,
+  getAllYachts, upsertYachts, getProposalAnalytics, uploadPartnerLogo,
 } from "../lib/supabase";
 import { supabase } from "../lib/supabase";
 import { parseBookingPDF } from "../BookingPDFParser";
@@ -31,10 +31,6 @@ const VAT_RATES = {
 
 // ══════════════════════════════════════════════════
 // Booking PDF Parser (Yachtfolio format)
-// After positional reassembly, each PDF row becomes one line.
-// Yacht names appear on their own line immediately after a "Last update: ..." line.
-// Format per page header: "Last update: DD Mon YYYY HH:MM:SS" then next line = YACHT NAME
-// Some yachts have no date after "Last update:" so name follows immediately on next line.
 // ══════════════════════════════════════════════════
 const DATE_RE = /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}$/;
 const MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
@@ -58,14 +54,12 @@ function toISO(d) {
 }
 
 function parseBookingPDFText(rawText) {
-  // Pre-process: fix merged lines from pdfjs Y-position grouping
   const rawLines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
   const lines = [];
 
   const FULL_DATE = /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/g;
 
   for (const l of rawLines) {
-    // 1. Split "Start End Status" jammed onto end of any line
     if (l.endsWith('Start End Status')) {
       const base = l.slice(0, l.length - 'Start End Status'.length).trim();
       if (base) lines.push(base);
@@ -79,21 +73,17 @@ function parseBookingPDFText(rawText) {
       continue;
     }
 
-    // 2. Split lines with TWO dates on them: "01 Nov 2025 09 May 2026 Booked - ..."
-    // → "01 Nov 2025", "09 May 2026 Booked - ..."
     const dateMatches = [...l.matchAll(FULL_DATE)];
     if (dateMatches.length >= 2) {
       const secondStart = dateMatches[1].index;
-      lines.push(l.slice(0, secondStart).trim());  // first date
-      lines.push(l.slice(secondStart).trim());       // second date + rest
+      lines.push(l.slice(0, secondStart).trim());
+      lines.push(l.slice(secondStart).trim());
       continue;
     }
 
     lines.push(l);
   }
 
-  // Phase 1: Extract yacht names
-  // Format: "Last update: DD Mon YYYY HH:MM:SS YACHT NAME" (name inline after timestamp)
   const yachtNames = [];
   const yachtSet = new Set();
 
@@ -105,11 +95,9 @@ function parseBookingPDFText(rawText) {
     const inline = (m[1] || '').trim();
 
     if (inline && !DATETIME_ONLY_RE.test(inline) && !/^\d{2}:\d{2}:\d{2}$/.test(inline)) {
-      // Name is inline on the same line — strip any trailing time fragment
       const name = inline.replace(/\d{2}:\d{2}:\d{2}\s*/, '').trim();
       if (name && !yachtSet.has(name)) { yachtSet.add(name); yachtNames.push(name); }
     } else {
-      // Name is on the next non-empty line (skip a possible time-only fragment)
       let j = i + 1;
       while (j < lines.length && /^\d{2}:\d{2}:\d{2}$/.test(lines[j])) j++;
       if (j < lines.length) {
@@ -135,18 +123,14 @@ function parseBookingPDFText(rawText) {
 
   if (!yachtNames.length) return [];
 
-  // Build map
   const yachtMap = {};
   for (const n of yachtNames) yachtMap[n] = { name: n, bookings: [] };
 
-  // Phase 2: Walk lines, assign bookings to yachts in order
-  // Each "Start" / "End" / "Status" header sequence advances the yacht index
   let yachtIndex = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Skip boilerplate
     if (LAST_UPDATE_RE.test(line)) continue;
     if (/^\d{2}\/\d{2}\/\d{4}/.test(line)) continue;
     if (/^https?:\/\//.test(line)) continue;
@@ -157,7 +141,6 @@ function parseBookingPDFText(rawText) {
     if (/^\d{2}:\d{2}:\d{2}$/.test(line)) continue;
     if (yachtSet.has(line)) continue;
 
-    // "Start End Status" header = advance to next yacht
     if (line === 'Start' && lines[i + 1] === 'End' && lines[i + 2] === 'Status') {
       yachtIndex++;
       i += 2;
@@ -168,14 +151,12 @@ function parseBookingPDFText(rawText) {
     if (yachtIndex < 0 || yachtIndex >= yachtNames.length) continue;
     const currentYacht = yachtMap[yachtNames[yachtIndex]];
 
-    // Parse a booking: DD Mon YYYY line followed by another DD Mon YYYY line
     if (DATE_RE.test(line)) {
       const nextLine = lines[i + 1];
       if (nextLine && DATE_RE.test(nextLine)) {
         const startDate = parseDate(line);
         const endDate = parseDate(nextLine);
 
-        // Collect status+route tokens until next date / header / boilerplate
         const statusParts = [];
         let k = i + 2;
         while (k < lines.length) {
@@ -218,6 +199,7 @@ function parseBookingPDFText(rawText) {
 
   return yachtNames.map(n => yachtMap[n]).filter(y => y.bookings.length > 0);
 }
+
 function parseYachtfolioXLSX(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -284,10 +266,6 @@ async function extractTextFromPDF(file) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
 
-    // Use pdfjs item.width and x-position to reconstruct lines properly.
-    // Each item has: str, transform (x=transform[4], y=transform[5]), width, height
-    // Items on the same line have the same Y. We add a space only when the gap
-    // between end of previous item and start of next exceeds 15% of the font height.
     const rowMap = new Map();
     for (const item of content.items) {
       if (!item.str) continue;
@@ -329,13 +307,11 @@ async function extractTextFromPDF(file) {
 async function saveBookingsForProposal(parsedYachts, proposalId, dbYachts) {
   const results = { saved: 0, matched: 0, errors: [] };
 
-  // Build name -> id map from the yachts in the proposal
   const nameMap = {};
   for (const y of dbYachts) {
     nameMap[y.name.toUpperCase()] = y.id;
   }
 
-  // Also look up any yacht names from PDF that aren't in the proposal set
   const unmatchedNames = parsedYachts
     .map(y => y.name.toUpperCase())
     .filter(n => !nameMap[n]);
@@ -354,12 +330,10 @@ async function saveBookingsForProposal(parsedYachts, proposalId, dbYachts) {
     }
   }
 
-  // Delete existing bookings for this proposal (refresh)
   if (proposalId) {
     await supabase.from('yacht_bookings').delete().eq('proposal_id', proposalId);
   }
 
-  // Build all booking rows
   const allRows = [];
   for (const yacht of parsedYachts) {
     const yachtId = nameMap[yacht.name.toUpperCase()] || null;
@@ -469,6 +443,7 @@ function NewProposal() {
   const navigate = useNavigate();
   const xlsxRef = useRef(null);
   const pdfRef = useRef(null);
+  const logoRef = useRef(null);
 
   const [step, setStep] = useState(1);
   const [parsedYachts, setParsedYachts] = useState([]);
@@ -477,6 +452,7 @@ function NewProposal() {
   const [form, setForm] = useState({
     client_name: "", title: "", destination: "", discount: 0,
     broker_friendly: false, message: "", itinerary_link: "",
+    partner_logo_url: "",
   });
 
   // Upload states
@@ -487,6 +463,10 @@ function NewProposal() {
   const [pdfUploading, setPdfUploading] = useState(false);
   const [pdfStatus, setPdfStatus] = useState(null);
   const [parsedBookings, setParsedBookings] = useState(null);
+
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoStatus, setLogoStatus] = useState(null);
+  const [logoPreview, setLogoPreview] = useState(null);
 
   const [saving, setSaving] = useState(false);
   const [createdProposal, setCreatedProposal] = useState(null);
@@ -511,7 +491,7 @@ function NewProposal() {
     }
   }, []);
 
-  // Handle Booking PDF upload — v3 with debug
+  // Handle Booking PDF upload
   const handlePdf = useCallback(async (file) => {
     if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
       setPdfStatus({ type: "error", message: "Please upload a PDF file." });
@@ -521,15 +501,7 @@ function NewProposal() {
     setPdfStatus(null);
     try {
       const text = await extractTextFromPDF(file);
-      // DEBUG: log first 500 chars so we can see what pdfjs produces
-      console.log("=== PDF RAW TEXT (first 500 chars) ===");
-      console.log(text.substring(0, 500));
-      console.log("=== PDF LINES (first 30) ===");
-      const debugLines = text.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 30);
-      debugLines.forEach((l, i) => console.log(`[${i}] |${l}|`));
-
       const parsed = parseBookingPDF(text);
-      console.log("=== PARSED YACHTS ===", parsed.length, parsed.map(y => y.name));
 
       if (!parsed.length) throw new Error("No yachts found in PDF. Open browser console (F12) for debug output.");
       const totalBookings = parsed.reduce((sum, y) => sum + y.bookings.length, 0);
@@ -546,6 +518,41 @@ function NewProposal() {
     }
   }, []);
 
+  // Handle partner logo upload
+  const handleLogoUpload = useCallback(async (file) => {
+    if (!file) return;
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
+    if (!validTypes.includes(file.type)) {
+      setLogoStatus({ type: "error", message: "Please upload a PNG, JPG, WebP or SVG file." });
+      return;
+    }
+    setLogoUploading(true);
+    setLogoStatus(null);
+
+    // Show local preview immediately
+    const reader = new FileReader();
+    reader.onload = (e) => setLogoPreview(e.target.result);
+    reader.readAsDataURL(file);
+
+    try {
+      const url = await uploadPartnerLogo(file);
+      setForm(f => ({ ...f, partner_logo_url: url }));
+      setLogoStatus({ type: "success", message: "Logo uploaded successfully" });
+    } catch (err) {
+      setLogoStatus({ type: "error", message: "Failed to upload logo: " + err.message });
+      setLogoPreview(null);
+    } finally {
+      setLogoUploading(false);
+    }
+  }, []);
+
+  const clearLogo = () => {
+    setForm(f => ({ ...f, partner_logo_url: "" }));
+    setLogoPreview(null);
+    setLogoStatus(null);
+    if (logoRef.current) logoRef.current.value = '';
+  };
+
   // Create proposal + save bookings
   const handleCreate = async () => {
     if (!form.client_name || !form.title) { alert("Client name and title are required."); return; }
@@ -554,7 +561,6 @@ function NewProposal() {
       const selectedDbIds = dbYachts.filter((_, i) => selectedYachtIds.has(i)).map(y => y.id);
       const prop = await createProposal({ ...form, yacht_ids: selectedDbIds });
 
-      // Save bookings if PDF was uploaded
       if (parsedBookings && parsedBookings.length > 0) {
         const bookingResult = await saveBookingsForProposal(parsedBookings, prop.id, dbYachts);
         console.log("Bookings saved:", bookingResult);
@@ -747,6 +753,63 @@ function NewProposal() {
                   </select>
                 </div>
               </div>
+
+              {/* ── Partner Logo Upload ── */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={S.label}>Partner / Co-Broker Logo <span style={{ color: "#aaa", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(optional — replaces Roccabella logo)</span></div>
+                <input ref={logoRef} type="file" accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml" style={{ display: "none" }}
+                  onChange={e => { handleLogoUpload(e.target.files[0]); e.target.value = ''; }} />
+
+                {!logoPreview ? (
+                  <div
+                    style={{
+                      border: `2px dashed ${BORDER}`,
+                      borderRadius: 8, padding: "20px 24px", textAlign: "center",
+                      cursor: "pointer", background: WHITE,
+                      transition: "border-color 0.15s",
+                    }}
+                    onClick={() => logoRef.current?.click()}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 600, color: NAVY }}>
+                      {logoUploading ? "Uploading…" : "Click to upload logo"}
+                    </div>
+                    <div style={{ fontSize: 11, color: SLATE, marginTop: 4 }}>PNG, JPG, WebP or SVG · Recommended height: 40–60px</div>
+                  </div>
+                ) : (
+                  <div style={{
+                    border: `1px solid ${BORDER}`, borderRadius: 8, padding: "16px 20px",
+                    display: "flex", alignItems: "center", gap: 16, background: WHITE,
+                  }}>
+                    <img
+                      src={logoPreview}
+                      alt="Partner logo preview"
+                      style={{ height: 44, maxWidth: 180, objectFit: "contain" }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      {logoStatus?.type === "success" && (
+                        <div style={{ fontSize: 12, color: "#22c55e", fontWeight: 500 }}>✓ {logoStatus.message}</div>
+                      )}
+                    </div>
+                    <button
+                      onClick={clearLogo}
+                      style={{ ...S.btnOutline, padding: "6px 14px", fontSize: 12, color: RED, borderColor: RED }}
+                    >
+                      Remove
+                    </button>
+                    <button
+                      onClick={() => logoRef.current?.click()}
+                      style={{ ...S.btnOutline, padding: "6px 14px", fontSize: 12 }}
+                    >
+                      Replace
+                    </button>
+                  </div>
+                )}
+
+                {logoStatus?.type === "error" && (
+                  <div style={S.statusErr}>✗ {logoStatus.message}</div>
+                )}
+              </div>
+
               <div style={{ marginBottom: 16 }}>
                 <div style={S.label}>Personal Message</div>
                 <textarea style={S.textarea} value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))} placeholder="Following our conversation, I've curated a selection of exceptional yachts..." />
@@ -769,6 +832,11 @@ function NewProposal() {
             <div style={{ fontSize: 14, color: "#777", marginBottom: 8 }}>
               <strong>{createdProposal.client_name}</strong> &mdash; {createdProposal.title}
             </div>
+            {createdProposal.partner_logo_url && (
+              <div style={{ marginBottom: 12 }}>
+                <img src={createdProposal.partner_logo_url} alt="Partner logo" style={{ height: 36, objectFit: "contain", opacity: 0.7 }} />
+              </div>
+            )}
             {parsedBookings && (
               <div style={{ fontSize: 13, color: "#22c55e", marginBottom: 16 }}>
                 📅 Booking data saved for {parsedBookings.length} yacht{parsedBookings.length !== 1 ? 's' : ''}
