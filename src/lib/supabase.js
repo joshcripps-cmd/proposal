@@ -236,3 +236,37 @@ export async function uploadPartnerLogo(file, proposalSlug) {
 
   return signedData.signedUrl;
 }
+// Upload a partner logo to Supabase Storage and return a public URL
+export async function uploadPartnerLogo(file, proposalSlug) {
+  if (!file) throw new Error("No file provided");
+
+  const validTypes = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"];
+  if (!validTypes.includes(file.type)) {
+    throw new Error("Invalid file type. Please upload PNG, JPG, SVG, or WebP.");
+  }
+
+  if (file.size > 2 * 1024 * 1024) {
+    throw new Error("File too large. Max 2MB.");
+  }
+
+  const ext = file.name.split(".").pop();
+  const fileName = `${proposalSlug || "logo"}-${Date.now()}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("partner-logos")
+    .upload(fileName, file, {
+      cacheControl: "3600",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    console.error("Upload error:", uploadError);
+    throw uploadError;
+  }
+
+  const { data } = supabase.storage
+    .from("partner-logos")
+    .getPublicUrl(fileName);
+
+  return data.publicUrl;
+}
