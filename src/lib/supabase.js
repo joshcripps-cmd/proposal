@@ -191,3 +191,48 @@ export function onAuthChange(cb) { return supabase.auth.onAuthStateChange(cb); }
   const { data } = supabase.storage.from('partner-logos').getPublicUrl(path);
   return data.publicUrl;
 }
+// Upload a partner logo to Supabase Storage and return a signed URL (1 year)
+export async function uploadPartnerLogo(file, proposalSlug) {
+  if (!file) throw new Error("No file provided");
+
+  // Validate file type
+  const validTypes = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"];
+  if (!validTypes.includes(file.type)) {
+    throw new Error("Invalid file type. Please upload PNG, JPG, SVG, or WebP.");
+  }
+
+  // Validate size (max 2MB)
+  if (file.size > 2 * 1024 * 1024) {
+    throw new Error("File too large. Max 2MB.");
+  }
+
+  // Build a unique path: slug + timestamp + extension
+  const ext = file.name.split(".").pop();
+  const fileName = `${proposalSlug || "logo"}-${Date.now()}.${ext}`;
+  const filePath = fileName;
+
+  // Upload
+  const { error: uploadError } = await supabase.storage
+    .from("partner-logos")
+    .upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    console.error("Upload error:", uploadError);
+    throw uploadError;
+  }
+
+  // Create signed URL valid for 1 year
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from("partner-logos")
+    .createSignedUrl(filePath, 31536000); // 1 year in seconds
+
+  if (signedError) {
+    console.error("Signed URL error:", signedError);
+    throw signedError;
+  }
+
+  return signedData.signedUrl;
+}
