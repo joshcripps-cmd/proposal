@@ -4,13 +4,10 @@ import { useParams } from "react-router-dom";
 import { jsPDF } from "jspdf";
 import { getProposalBySlug, getYachtsByIds, getBookingsByYachtIds, trackEvent, addToShortlist, removeFromShortlist, getShortlist, submitEnquiry, submitCharterEnquiry } from "../lib/supabase";
 
-// ── Logo Assets (base64 embedded) ──
-// NOTE: Paste your existing LOGO_WHITE base64 string here (keep it identical to your original file)
-const LOGO_WHITE = "__PASTE_YOUR_EXISTING_LOGO_WHITE_BASE64_HERE__";
-// NOTE: Paste your existing LOGO_NAVY base64 string here (keep it identical to your original file)
-const LOGO_NAVY = "__PASTE_YOUR_EXISTING_LOGO_NAVY_BASE64_HERE__";
-// NOTE: Paste your existing JOSH_PHOTO base64 string here (keep it identical to your original file)
-const JOSH_PHOTO = "__PASTE_YOUR_EXISTING_JOSH_PHOTO_BASE64_HERE__";
+// ── Logo Assets (hosted on Supabase) ──
+const LOGO_WHITE = "https://ghfukrwcrnfpsosqmaho.supabase.co/storage/v1/object/public/partner-logos/logo-white.png";
+const LOGO_NAVY = "https://ghfukrwcrnfpsosqmaho.supabase.co/storage/v1/object/public/partner-logos/logo-white.png";
+const JOSH_PHOTO = "https://ghfukrwcrnfpsosqmaho.supabase.co/storage/v1/object/public/partner-logos/josh-cripps.jpg";
 
 // ── Brand Constants ──
 const NAVY = "#0f1d2f";
