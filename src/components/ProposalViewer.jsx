@@ -72,14 +72,19 @@ function LoadingScreen({ onComplete, brokerFriendly, clientName, partnerLogoUrl 
     "Finalising your proposal",
   ];
 
+  const bg = brokerFriendly ? WHITE : NAVY;
+  const textMuted = brokerFriendly ? "rgba(15,29,47,0.4)" : "rgba(255,255,255,0.4)";
+  const textFaint = brokerFriendly ? "rgba(15,29,47,0.2)" : "rgba(255,255,255,0.2)";
+  const trackBg = brokerFriendly ? "rgba(15,29,47,0.08)" : "rgba(255,255,255,0.1)";
+
   return (
     <div style={{
-      position: "fixed", inset: 0, background: NAVY, display: "flex",
+      position: "fixed", inset: 0, background: bg, display: "flex",
       flexDirection: "column", alignItems: "center", justifyContent: "center",
       zIndex: 9999, fontFamily: "'Cormorant Garamond', serif",
     }}>
       {/* Logo */}
-      {!brokerFriendly ? (
+      {(!brokerFriendly || partnerLogoUrl) ? (
         <img
           src={partnerLogoUrl || LOGO_WHITE}
           alt={partnerLogoUrl ? "Partner" : "Roccabella Yachts"}
@@ -92,7 +97,7 @@ function LoadingScreen({ onComplete, brokerFriendly, clientName, partnerLogoUrl 
         />
       ) : (
         <div style={{
-          fontSize: 12, letterSpacing: 4, color: "rgba(255,255,255,0.4)",
+          fontSize: 12, letterSpacing: 4, color: textMuted,
           fontFamily: "'Inter', sans-serif", fontWeight: 300, marginBottom: 40,
           textTransform: "uppercase", opacity: progress > 5 ? 1 : 0,
           transition: "opacity 1s ease",
@@ -101,7 +106,7 @@ function LoadingScreen({ onComplete, brokerFriendly, clientName, partnerLogoUrl 
 
       {/* Progress line */}
       <div style={{
-        width: 280, height: 1, background: "rgba(255,255,255,0.1)",
+        width: 280, height: 1, background: trackBg,
         borderRadius: 1, overflow: "hidden", marginBottom: 24,
       }}>
         <div style={{
@@ -112,7 +117,7 @@ function LoadingScreen({ onComplete, brokerFriendly, clientName, partnerLogoUrl 
 
       {/* Phase text */}
       <div style={{
-        fontSize: 13, color: "rgba(255,255,255,0.4)", letterSpacing: 3,
+        fontSize: 13, color: textMuted, letterSpacing: 3,
         fontFamily: "'Inter', sans-serif", fontWeight: 300, textTransform: "uppercase",
         transition: "opacity 0.5s ease",
       }}>
@@ -123,7 +128,7 @@ function LoadingScreen({ onComplete, brokerFriendly, clientName, partnerLogoUrl 
       {!brokerFriendly && (
         <div style={{
           position: "absolute", bottom: 60, fontSize: 13,
-          color: "rgba(255,255,255,0.2)", letterSpacing: 2,
+          color: textFaint, letterSpacing: 2,
           fontFamily: "'Inter', sans-serif", fontWeight: 300,
         }}>
           Prepared exclusively for {clientName}
@@ -138,13 +143,21 @@ function EntryGate({ onEnter, brokerFriendly, clientName, partnerLogoUrl }) {
   const [name, setName] = useState("");
   const [hovering, setHovering] = useState(false);
 
+  const bg = brokerFriendly ? WHITE : NAVY;
+  const textPrimary = brokerFriendly ? NAVY : WHITE;
+  const textSecondary = brokerFriendly ? "rgba(15,29,47,0.5)" : "rgba(255,255,255,0.5)";
+  const textMuted = brokerFriendly ? "rgba(15,29,47,0.4)" : "rgba(255,255,255,0.4)";
+  const textFaint = brokerFriendly ? "rgba(15,29,47,0.35)" : "rgba(255,255,255,0.35)";
+  const inputBg = brokerFriendly ? "rgba(15,29,47,0.04)" : "rgba(255,255,255,0.06)";
+  const inputBorder = brokerFriendly ? "rgba(15,29,47,0.15)" : "rgba(255,255,255,0.12)";
+
   return (
     <div style={{
-      position: "fixed", inset: 0, background: NAVY,
+      position: "fixed", inset: 0, background: bg,
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       fontFamily: "'Cormorant Garamond', serif",
     }}>
-      {!brokerFriendly && (
+      {(!brokerFriendly || partnerLogoUrl) && (
         <img
           src={partnerLogoUrl || LOGO_WHITE}
           alt={partnerLogoUrl ? "Partner" : "Roccabella Yachts"}
@@ -155,9 +168,9 @@ function EntryGate({ onEnter, brokerFriendly, clientName, partnerLogoUrl }) {
           }}
         />
       )}
-      {brokerFriendly && (
+      {brokerFriendly && !partnerLogoUrl && (
         <div style={{
-          fontSize: 12, letterSpacing: 4, color: "rgba(255,255,255,0.4)",
+          fontSize: 12, letterSpacing: 4, color: textMuted,
           fontFamily: "'Inter', sans-serif", fontWeight: 300, marginBottom: 50,
           textTransform: "uppercase",
         }}>Charter Yacht Selection</div>
@@ -166,13 +179,13 @@ function EntryGate({ onEnter, brokerFriendly, clientName, partnerLogoUrl }) {
       {!brokerFriendly && (
         <>
           <div style={{
-            fontSize: 15, color: "rgba(255,255,255,0.5)", marginBottom: 8,
+            fontSize: 15, color: textSecondary, marginBottom: 8,
             fontFamily: "'Inter', sans-serif", fontWeight: 300, letterSpacing: 1,
           }}>
             This proposal was prepared for
           </div>
           <div style={{
-            fontSize: 26, color: WHITE, marginBottom: 40, fontWeight: 400,
+            fontSize: 26, color: textPrimary, marginBottom: 40, fontWeight: 400,
           }}>
             {clientName}
           </div>
@@ -180,7 +193,7 @@ function EntryGate({ onEnter, brokerFriendly, clientName, partnerLogoUrl }) {
       )}
 
       <div style={{
-        fontSize: 13, color: "rgba(255,255,255,0.35)", marginBottom: 12,
+        fontSize: 13, color: textFaint, marginBottom: 12,
         fontFamily: "'Inter', sans-serif", fontWeight: 300, letterSpacing: 1,
       }}>
         Please enter your name to view
@@ -192,9 +205,9 @@ function EntryGate({ onEnter, brokerFriendly, clientName, partnerLogoUrl }) {
         onKeyDown={(e) => e.key === "Enter" && name.trim() && onEnter(name.trim())}
         placeholder="Your name"
         style={{
-          width: 280, padding: "14px 20px", background: "rgba(255,255,255,0.06)",
-          border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0,
-          color: WHITE, fontSize: 15, fontFamily: "'Inter', sans-serif",
+          width: 280, padding: "14px 20px", background: inputBg,
+          border: `1px solid ${inputBorder}`, borderRadius: 0,
+          color: textPrimary, fontSize: 15, fontFamily: "'Inter', sans-serif",
           fontWeight: 300, outline: "none", textAlign: "center",
           letterSpacing: 1, marginBottom: 20,
         }}
@@ -206,7 +219,7 @@ function EntryGate({ onEnter, brokerFriendly, clientName, partnerLogoUrl }) {
         onMouseLeave={() => setHovering(false)}
         disabled={!name.trim()}
         style={{
-          padding: "14px 48px", background: name.trim() ? RED_ACCENT : "rgba(255,255,255,0.05)",
+          padding: "14px 48px", background: name.trim() ? RED_ACCENT : (brokerFriendly ? "rgba(15,29,47,0.05)" : "rgba(255,255,255,0.05)"),
           border: "none", color: WHITE, fontSize: 12, letterSpacing: 3,
           fontFamily: "'Inter', sans-serif", fontWeight: 400, cursor: name.trim() ? "pointer" : "default",
           textTransform: "uppercase", transition: "all 0.3s ease",
@@ -1013,9 +1026,14 @@ export default function RoccabellaProposal() {
       if (b64) imgCache[y.name] = b64;
     }
 
-    // Resolve which logos to use (partner override if uploaded)
-    let logoWhiteB64 = LOGO_WHITE;
-    let logoNavyB64 = LOGO_NAVY;
+    // Resolve logos (partner override if uploaded, otherwise Roccabella)
+    let logoWhiteB64 = await fetchImageViaProxy(LOGO_WHITE);
+    if (!logoWhiteB64) logoWhiteB64 = await toBase64Fallback(LOGO_WHITE);
+    let logoNavyB64 = await fetchImageViaProxy(LOGO_NAVY);
+    if (!logoNavyB64) logoNavyB64 = await toBase64Fallback(LOGO_NAVY);
+    let brokerPhotoB64 = await fetchImageViaProxy(JOSH_PHOTO);
+    if (!brokerPhotoB64) brokerPhotoB64 = await toBase64Fallback(JOSH_PHOTO);
+
     if (proposal.partner_logo_url) {
       let partnerB64 = await fetchImageViaProxy(proposal.partner_logo_url);
       if (!partnerB64) partnerB64 = await toBase64Fallback(proposal.partner_logo_url);
@@ -1025,7 +1043,6 @@ export default function RoccabellaProposal() {
       }
     }
 
-    const brokerPhotoB64 = JOSH_PHOTO;
     const isBF = proposal.broker_friendly;
 
     // ── Helper: draw branded placeholder when image is missing ──
@@ -1049,7 +1066,8 @@ export default function RoccabellaProposal() {
     doc.rect(0, 0, W / 2, H, "F");
     doc.setFillColor(NAVY_PDF);
     doc.rect(W / 2, 0, W / 2, H, "F");
-    if (!isBF) { try { doc.addImage(logoNavyB64, "PNG", margin, H / 2 - 60, 140, 50); } catch {} }
+    if (!isBF && logoNavyB64) { try { doc.addImage(logoNavyB64, "PNG", margin, H / 2 - 60, 140, 50); } catch {} }
+    if (isBF && proposal.partner_logo_url && logoNavyB64) { try { doc.addImage(logoNavyB64, "PNG", margin, H / 2 - 60, 140, 50); } catch {} }
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(14);
     doc.setFont("helvetica", "normal");
@@ -1171,7 +1189,7 @@ export default function RoccabellaProposal() {
     if (!isBF) {
       doc.addPage();
       doc.setFillColor(NAVY_PDF);doc.rect(0,0,W/2,H,"F");
-      try{doc.addImage(brokerPhotoB64,"JPEG",W/4-55,H/2-100,110,110);}catch{}
+      if (brokerPhotoB64) { try{doc.addImage(brokerPhotoB64,"JPEG",W/4-55,H/2-100,110,110);}catch{} }
       doc.setTextColor(201,169,110);doc.setFontSize(9);doc.setFont("helvetica","normal");
       doc.text(BROKER.email,W/4-55,H/2+30);doc.text(BROKER.phone,W/4-55,H/2+45);
       doc.setFillColor(255,255,255);doc.rect(W/2,0,W/2,H,"F");
@@ -1186,7 +1204,8 @@ export default function RoccabellaProposal() {
 
     // Closing page
     doc.addPage();doc.setFillColor(NAVY_PDF);doc.rect(0,0,W,H,"F");
-    if(!isBF){try{doc.addImage(logoWhiteB64,"PNG",W/2-70,H/2-80,140,50);}catch{}}
+    if(!isBF && logoWhiteB64){try{doc.addImage(logoWhiteB64,"PNG",W/2-70,H/2-80,140,50);}catch{}}
+    if(isBF && proposal.partner_logo_url && logoWhiteB64){try{doc.addImage(logoWhiteB64,"PNG",W/2-70,H/2-80,140,50);}catch{}}
     doc.setTextColor(201,169,110);doc.setFontSize(16);doc.setFont("helvetica","italic");
     doc.text(isBF ? "Charter Yacht Selection" : "An Experience Like No Other",W/2,H/2+10,{align:"center"});
     if(!isBF){
@@ -1338,9 +1357,12 @@ export default function RoccabellaProposal() {
 
       {/* ── HEADER ── */}
       <header style={{
-        background: `linear-gradient(170deg, ${NAVY} 0%, ${NAVY_MID} 100%)`, padding: "48px 0 56px", textAlign: "center",
+        background: isBF
+          ? `linear-gradient(170deg, ${WHITE} 0%, ${CREAM} 100%)`
+          : `linear-gradient(170deg, ${NAVY} 0%, ${NAVY_MID} 100%)`,
+        padding: "48px 0 56px", textAlign: "center",
       }}>
-        {!isBF && (
+        {(!isBF || proposal.partner_logo_url) && (
           <img
             src={proposal.partner_logo_url || LOGO_WHITE}
             alt={proposal.partner_logo_url ? "Partner" : "Roccabella Yachts"}
@@ -1353,11 +1375,11 @@ export default function RoccabellaProposal() {
         )}
         <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${GOLD}44, transparent)`, width: 120, margin: "0 auto 34px" }} />
         <div style={{
-          fontSize: 12, color: "rgba(255,255,255,0.4)", letterSpacing: 2,
+          fontSize: 12, color: isBF ? "rgba(15,29,47,0.5)" : "rgba(255,255,255,0.4)", letterSpacing: 2,
           textTransform: "uppercase", fontWeight: 300, marginBottom: 8,
         }}>{isBF ? "Charter Yacht Selection" : "Private Charter Proposal"}</div>
         <div style={{
-          fontSize: 28, color: WHITE, fontFamily: "'Cormorant Garamond', serif",
+          fontSize: 28, color: isBF ? NAVY : WHITE, fontFamily: "'Cormorant Garamond', serif",
           fontWeight: 400, marginBottom: 8,
         }}>{proposal.title}</div>
         {!isBF && (
@@ -1529,9 +1551,12 @@ export default function RoccabellaProposal() {
 
       {/* ── FOOTER ── */}
       <footer style={{
-        background: `linear-gradient(170deg, ${NAVY} 0%, ${NAVY_MID} 100%)`, padding: "48px 24px", textAlign: "center",
+        background: isBF
+          ? `linear-gradient(170deg, ${CREAM} 0%, ${WHITE} 100%)`
+          : `linear-gradient(170deg, ${NAVY} 0%, ${NAVY_MID} 100%)`,
+        padding: "48px 24px", textAlign: "center",
       }}>
-        {!isBF && (
+        {(!isBF || proposal.partner_logo_url) && (
           <img
             src={proposal.partner_logo_url || LOGO_WHITE}
             alt={proposal.partner_logo_url ? "Partner" : "Roccabella Yachts"}
@@ -1542,9 +1567,9 @@ export default function RoccabellaProposal() {
             }}
           />
         )}
-        {isBF && (
+        {isBF && !proposal.partner_logo_url && (
           <div style={{
-            fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: 2,
+            fontSize: 11, color: "rgba(15,29,47,0.4)", letterSpacing: 2,
             fontFamily: "'Inter', sans-serif", fontWeight: 300, marginBottom: 12,
           }}>YACHT CHARTER SELECTION</div>
         )}
@@ -1555,7 +1580,7 @@ export default function RoccabellaProposal() {
           }}>LONDON &nbsp; DUBAI &nbsp; GENEVA &nbsp; PALMA &nbsp; MIAMI</div>
         )}
         <div style={{
-          fontSize: 11, color: "rgba(255,255,255,0.2)", marginTop: 20,
+          fontSize: 11, color: isBF ? "rgba(15,29,47,0.35)" : "rgba(255,255,255,0.2)", marginTop: 20,
           fontFamily: "'Inter', sans-serif", fontWeight: 300,
         }}>
           {isBF
